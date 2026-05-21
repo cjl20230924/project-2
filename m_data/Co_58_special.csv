@@ -1,0 +1,188 @@
+radionuclide,Route of intake,Aerosols type,Monitoring method,Time (d),m(t),fA
+Co-58,Inhalation,Type M,Whole body,1,4.8e-1,
+Co-58,Inhalation,Type M,Lung,1,5.7e-2,
+Co-58,Inhalation,Type M,Urine,1,2.0e-2,
+Co-58,Inhalation,Type M,Feces,1,1.0e-1,
+Co-58,Inhalation,Type M,Whole body,2,2.5e-1,
+Co-58,Inhalation,Type M,Lung,2,5.5e-2,
+Co-58,Inhalation,Type M,Urine,2,9.0e-3,
+Co-58,Inhalation,Type M,Feces,2,1.4e-1,
+Co-58,Inhalation,Type M,Whole body,3,1.5e-1,
+Co-58,Inhalation,Type M,Lung,3,5.3e-2,
+Co-58,Inhalation,Type M,Urine,3,3.6e-3,
+Co-58,Inhalation,Type M,Feces,3,7.0e-2,
+Co-58,Inhalation,Type M,Whole body,4,1.0e-1,
+Co-58,Inhalation,Type M,Lung,4,5.2e-2,
+Co-58,Inhalation,Type M,Urine,4,2.1e-3,
+Co-58,Inhalation,Type M,Feces,4,2.9e-2,
+Co-58,Inhalation,Type M,Whole body,5,8.7e-2,
+Co-58,Inhalation,Type M,Lung,5,5.1e-2,
+Co-58,Inhalation,Type M,Urine,5,1.6e-3,
+Co-58,Inhalation,Type M,Feces,5,1.2e-2,
+Co-58,Inhalation,Type M,Whole body,6,7.8e-2,
+Co-58,Inhalation,Type M,Lung,6,5.0e-2,
+Co-58,Inhalation,Type M,Urine,6,1.4e-3,
+Co-58,Inhalation,Type M,Feces,6,4.8e-3,
+Co-58,Inhalation,Type M,Whole body,7,7.3e-2,
+Co-58,Inhalation,Type M,Lung,7,4.8e-2,
+Co-58,Inhalation,Type M,Urine,7,1.2e-3,
+Co-58,Inhalation,Type M,Feces,7,2.2e-3,
+Co-58,Inhalation,Type M,Whole body,8,7.0e-2,
+Co-58,Inhalation,Type M,Lung,8,4.7e-2,
+Co-58,Inhalation,Type M,Urine,8,1.1e-3,
+Co-58,Inhalation,Type M,Feces,8,1.2e-3,
+Co-58,Inhalation,Type M,Whole body,9,6.8e-2,
+Co-58,Inhalation,Type M,Lung,9,4.6e-2,
+Co-58,Inhalation,Type M,Urine,9,1.0e-3,
+Co-58,Inhalation,Type M,Feces,9,8.0e-4,
+Co-58,Inhalation,Type M,Whole body,10,6.5e-2,
+Co-58,Inhalation,Type M,Lung,10,4.5e-2,
+Co-58,Inhalation,Type M,Urine,10,9.1e-4,
+Co-58,Inhalation,Type M,Feces,10,6.4e-4,
+Co-58,Inhalation,Type M,Whole body,100,1.0e-2,
+Co-58,Inhalation,Type M,Lung,100,9.0e-3,
+Co-58,Inhalation,Type M,Urine,100,7.5e-5,
+Co-58,Inhalation,Type M,Feces,100,4.5e-5,
+Co-58,Inhalation,Type S,Whole body,1,4.9e-1,
+Co-58,Inhalation,Type S,Lung,1,6.4e-2,
+Co-58,Inhalation,Type S,Urine,1,5.6e-3,
+Co-58,Inhalation,Type S,Feces,1,1.1e-1,
+Co-58,Inhalation,Type S,Whole body,2,2.5e-1,
+Co-58,Inhalation,Type S,Lung,2,6.1e-2,
+Co-58,Inhalation,Type S,Urine,2,3.1e-3,
+Co-58,Inhalation,Type S,Feces,2,1.5e-1,
+Co-58,Inhalation,Type S,Whole body,3,1.4e-1,
+Co-58,Inhalation,Type S,Lung,3,6.0e-2,
+Co-58,Inhalation,Type S,Urine,3,1.2e-3,
+Co-58,Inhalation,Type S,Feces,3,7.7e-2,
+Co-58,Inhalation,Type S,Whole body,4,9.4e-2,
+Co-58,Inhalation,Type S,Lung,4,5.9e-2,
+Co-58,Inhalation,Type S,Urine,4,6.5e-4,
+Co-58,Inhalation,Type S,Feces,4,3.2e-2,
+Co-58,Inhalation,Type S,Whole body,5,7.6e-2,
+Co-58,Inhalation,Type S,Lung,5,5.8e-2,
+Co-58,Inhalation,Type S,Urine,5,4.8e-4,
+Co-58,Inhalation,Type S,Feces,5,1.3e-2,
+Co-58,Inhalation,Type S,Whole body,6,6.9e-2,
+Co-58,Inhalation,Type S,Lung,6,5.7e-2,
+Co-58,Inhalation,Type S,Urine,6,4.0e-4,
+Co-58,Inhalation,Type S,Feces,6,5.2e-3,
+Co-58,Inhalation,Type S,Whole body,7,6.5e-2,
+Co-58,Inhalation,Type S,Lung,7,5.6e-2,
+Co-58,Inhalation,Type S,Urine,7,3.5e-4,
+Co-58,Inhalation,Type S,Feces,7,2.3e-3,
+Co-58,Inhalation,Type S,Whole body,8,6.3e-2,
+Co-58,Inhalation,Type S,Lung,8,5.5e-2,
+Co-58,Inhalation,Type S,Urine,8,3.1e-4,
+Co-58,Inhalation,Type S,Feces,8,1.2e-3,
+Co-58,Inhalation,Type S,Whole body,9,6.1e-2,
+Co-58,Inhalation,Type S,Lung,9,5.4e-2,
+Co-58,Inhalation,Type S,Urine,9,2.8e-4,
+Co-58,Inhalation,Type S,Feces,9,7.7e-4,
+Co-58,Inhalation,Type S,Whole body,10,5.9e-2,
+Co-58,Inhalation,Type S,Lung,10,5.2e-2,
+Co-58,Inhalation,Type S,Urine,10,2.5e-4,
+Co-58,Inhalation,Type S,Feces,10,6.1e-4,
+Co-58,Inhalation,Type S,Whole body,100,2.5e-2,
+Co-58,Inhalation,Type S,Lung,100,2.5e-2,
+Co-58,Inhalation,Type S,Urine,100,8.0e-6,
+Co-58,Inhalation,Type S,Feces,100,6.5e-5,
+Co-58,Ingestion,,Whole body,1,7.0e-1,0.1
+Co-58,Ingestion,,Urine,1,2.7e-2,0.1
+Co-58,Ingestion,,Feces,1,2.6e-1,0.1
+Co-58,Ingestion,,Whole body,2,3.4e-1,0.1
+Co-58,Ingestion,,Urine,2,1.4e-2,0.1
+Co-58,Ingestion,,Feces,2,3.4e-1,0.1
+Co-58,Ingestion,,Whole body,3,1.6e-1,0.1
+Co-58,Ingestion,,Urine,3,5.3e-3,0.1
+Co-58,Ingestion,,Feces,3,1.7e-1,0.1
+Co-58,Ingestion,,Whole body,4,8.4e-2,0.1
+Co-58,Ingestion,,Urine,4,2.9e-3,0.1
+Co-58,Ingestion,,Feces,4,7.1e-2,0.1
+Co-58,Ingestion,,Whole body,5,5.3e-2,0.1
+Co-58,Ingestion,,Urine,5,2.2e-3,0.1
+Co-58,Ingestion,,Feces,5,1.7e-2,0.1
+Co-58,Ingestion,,Whole body,6,4.1e-2,0.1
+Co-58,Ingestion,,Urine,6,1.8e-3,0.1
+Co-58,Ingestion,,Feces,6,1.0e-2,0.1
+Co-58,Ingestion,,Whole body,7,3.5e-2,0.1
+Co-58,Ingestion,,Urine,7,1.6e-3,0.1
+Co-58,Ingestion,,Feces,7,4.0e-3,0.1
+Co-58,Ingestion,,Whole body,8,3.1e-2,0.1
+Co-58,Ingestion,,Urine,8,1.4e-3,0.1
+Co-58,Ingestion,,Feces,8,1.6e-3,0.1
+Co-58,Ingestion,,Whole body,9,2.9e-2,0.1
+Co-58,Ingestion,,Urine,9,1.2e-3,0.1
+Co-58,Ingestion,,Feces,9,7.4e-4,0.1
+Co-58,Ingestion,,Whole body,10,2.7e-2,0.1
+Co-58,Ingestion,,Urine,10,1.1e-3,0.1
+Co-58,Ingestion,,Feces,10,4.0e-4,0.1
+Co-58,Ingestion,,Whole body,100,8.0e-3,0.1
+Co-58,Ingestion,,Urine,100,2.0e-5,0.1
+Co-58,Ingestion,,Feces,100,5.0e-6,0.1
+Co-58,Ingestion,,Whole body,1,7.1e-1,0.05
+Co-58,Ingestion,,Urine,1,1.4e-2,0.05
+Co-58,Ingestion,,Feces,1,2.7e-1,0.05
+Co-58,Ingestion,,Whole body,2,3.3e-1,0.05
+Co-58,Ingestion,,Urine,2,7.1e-3,0.05
+Co-58,Ingestion,,Feces,2,3.6e-1,0.05
+Co-58,Ingestion,,Whole body,3,1.4e-1,0.05
+Co-58,Ingestion,,Urine,3,2.7e-3,0.05
+Co-58,Ingestion,,Feces,3,1.8e-1,0.05
+Co-58,Ingestion,,Whole body,4,6.6e-2,0.05
+Co-58,Ingestion,,Urine,4,1.5e-3,0.05
+Co-58,Ingestion,,Feces,4,7.4e-2,0.05
+Co-58,Ingestion,,Whole body,5,3.6e-2,0.05
+Co-58,Ingestion,,Urine,5,1.1e-3,0.05
+Co-58,Ingestion,,Feces,5,2.9e-2,0.05
+Co-58,Ingestion,,Whole body,6,2.4e-2,0.05
+Co-58,Ingestion,,Urine,6,9.1e-4,0.05
+Co-58,Ingestion,,Feces,6,1.1e-2,0.05
+Co-58,Ingestion,,Whole body,7,1.9e-2,0.05
+Co-58,Ingestion,,Urine,7,7.9e-4,0.05
+Co-58,Ingestion,,Feces,7,4.0e-3,0.05
+Co-58,Ingestion,,Whole body,8,1.6e-2,0.05
+Co-58,Ingestion,,Urine,8,7.0e-4,0.05
+Co-58,Ingestion,,Feces,8,1.6e-3,0.05
+Co-58,Ingestion,,Whole body,9,1.5e-2,0.05
+Co-58,Ingestion,,Urine,9,6.2e-4,0.05
+Co-58,Ingestion,,Feces,9,6.4e-4,0.05
+Co-58,Ingestion,,Whole body,10,1.4e-2,0.05
+Co-58,Ingestion,,Urine,10,5.5e-4,0.05
+Co-58,Ingestion,,Feces,10,3.0e-4,0.05
+Co-58,Ingestion,,Whole body,100,4.5e-3,0.05
+Co-58,Ingestion,,Urine,100,9.0e-6,0.05
+Co-58,Ingestion,,Feces,100,1.5e-6,0.05
+Co-58,Injection,,Whole body,1,6.6e-1,
+Co-58,Injection,,Urine,1,3.2e-1,
+Co-58,Injection,,Feces,1,1.1e-2,
+Co-58,Injection,,Whole body,2,5.2e-1,
+Co-58,Injection,,Urine,2,1.1e-1,
+Co-58,Injection,,Feces,2,2.5e-2,
+Co-58,Injection,,Whole body,3,4.5e-1,
+Co-58,Injection,,Urine,3,4.6e-2,
+Co-58,Injection,,Feces,3,2.0e-2,
+Co-58,Injection,,Whole body,4,4.0e-1,
+Co-58,Injection,,Urine,4,1.7e-2,
+Co-58,Injection,,Feces,4,1.3e-2,
+Co-58,Injection,,Whole body,5,3.7e-1,
+Co-58,Injection,,Urine,5,2.1e-2,
+Co-58,Injection,,Feces,5,7.7e-3,
+Co-58,Injection,,Whole body,6,3.4e-1,
+Co-58,Injection,,Urine,6,1.8e-2,
+Co-58,Injection,,Feces,6,5.0e-3,
+Co-58,Injection,,Whole body,7,3.2e-1,
+Co-58,Injection,,Urine,7,1.5e-2,
+Co-58,Injection,,Feces,7,3.7e-3,
+Co-58,Injection,,Whole body,8,3.0e-1,
+Co-58,Injection,,Urine,8,1.4e-2,
+Co-58,Injection,,Feces,8,2.9e-3,
+Co-58,Injection,,Whole body,9,2.8e-1,
+Co-58,Injection,,Urine,9,1.2e-2,
+Co-58,Injection,,Feces,9,2.5e-3,
+Co-58,Injection,,Whole body,10,2.7e-1,
+Co-58,Injection,,Urine,10,1.1e-2,
+Co-58,Injection,,Feces,10,2.2e-3,
+Co-58,Injection,,Whole body,100,8.0e-2,
+Co-58,Injection,,Urine,100,2.0e-4,
+Co-58,Injection,,Feces,100,4.0e-5,

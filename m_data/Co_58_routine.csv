@@ -1,0 +1,57 @@
+radionuclide,Aerosols type,Monitoring method,Period (d),m(T/2)
+Co-58,Type M,Lung,180,
+Co-58,Type M,Whole body,180,
+Co-58,Type M,Urine,180,
+Co-58,Type M,Feces,180,
+Co-58,Type M,Lung,120,1.6e-2
+Co-58,Type M,Whole body,120,2.3e-2
+Co-58,Type M,Urine,120,9.0e-5
+Co-58,Type M,Feces,120,7.8e-5
+Co-58,Type M,Lung,90,2.1e-2
+Co-58,Type M,Whole body,90,3.0e-2
+Co-58,Type M,Urine,90,1.3e-4
+Co-58,Type M,Feces,90,1.3e-4
+Co-58,Type M,Lung,60,2.9e-2
+Co-58,Type M,Whole body,60,4.0e-2
+Co-58,Type M,Urine,60,2.2e-4
+Co-58,Type M,Feces,60,2.2e-4
+Co-58,Type M,Lung,30,4.0e-2
+Co-58,Type M,Whole body,30,5.7e-2
+Co-58,Type M,Urine,30,5.8e-4
+Co-58,Type M,Feces,30,4.3e-4
+Co-58,Type M,Lung,14,4.8e-2
+Co-58,Type M,Whole body,14,7.3e-2
+Co-58,Type M,Urine,14,1.2e-3
+Co-58,Type M,Feces,14,2.2e-3
+Co-58,Type M,Lung,7,5.2e-2
+Co-58,Type M,Whole body,7,1.0e-1
+Co-58,Type M,Urine,7,2.1e-3
+Co-58,Type M,Feces,7,2.9e-2
+Co-58,Type S,Lung,180,1.6e-2
+Co-58,Type S,Whole body,180,1.7e-2
+Co-58,Type S,Urine,180,6.9e-6
+Co-58,Type S,Feces,180,4.3e-5
+Co-58,Type S,Lung,120,2.3e-2
+Co-58,Type S,Whole body,120,2.5e-2
+Co-58,Type S,Urine,120,1.3e-5
+Co-58,Type S,Feces,120,1.0e-4
+Co-58,Type S,Lung,90,2.9e-2
+Co-58,Type S,Whole body,90,3.2e-2
+Co-58,Type S,Urine,90,2.0e-5
+Co-58,Type S,Feces,90,1.6e-4
+Co-58,Type S,Lung,60,3.7e-2
+Co-58,Type S,Whole body,60,4.0e-2
+Co-58,Type S,Urine,60,4.2e-5
+Co-58,Type S,Feces,60,2.6e-4
+Co-58,Type S,Lung,30,4.8e-2
+Co-58,Type S,Whole body,30,5.3e-2
+Co-58,Type S,Urine,30,1.5e-4
+Co-58,Type S,Feces,30,4.3e-4
+Co-58,Type S,Lung,14,5.6e-2
+Co-58,Type S,Whole body,14,6.5e-2
+Co-58,Type S,Urine,14,3.5e-4
+Co-58,Type S,Feces,14,2.3e-3
+Co-58,Type S,Lung,7,5.9e-2
+Co-58,Type S,Whole body,7,9.4e-2
+Co-58,Type S,Urine,7,6.5e-4
+Co-58,Type S,Feces,7,3.2e-2

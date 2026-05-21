@@ -1,0 +1,114 @@
+radionuclide,Route of intake,Aerosols type,Monitoring method,Time (d),m(t),fA
+U-235,Inhalation,Type F,Urine,1,1.8e-1,
+U-235,Inhalation,Type F,Urine,2,6.4e-3,
+U-235,Inhalation,Type F,Urine,3,5.1e-3,
+U-235,Inhalation,Type F,Urine,4,4.6e-3,
+U-235,Inhalation,Type F,Urine,5,4.2e-3,
+U-235,Inhalation,Type F,Urine,6,3.8e-3,
+U-235,Inhalation,Type F,Urine,7,3.5e-3,
+U-235,Inhalation,Type F,Urine,8,3.2e-3,
+U-235,Inhalation,Type F,Urine,9,2.9e-3,
+U-235,Inhalation,Type F,Urine,10,2.7e-3,
+U-235,Inhalation,Type F,Urine,100,1.1e-4,
+U-235,Inhalation,Type F,Feces,1,5.6e-2,
+U-235,Inhalation,Type F,Feces,3,3.9e-2,
+U-235,Inhalation,Type F,Feces,5,6.24e-3,
+U-235,Inhalation,Type F,Lung,1,5.8e-2,
+U-235,Inhalation,Type F,Lung,2,5.6e-2,
+U-235,Inhalation,Type F,Lung,3,5.5e-2,
+U-235,Inhalation,Type F,Lung,4,5.4e-2,
+U-235,Inhalation,Type F,Lung,5,5.3e-2,
+U-235,Inhalation,Type F,Lung,6,5.3e-2,
+U-235,Inhalation,Type F,Lung,7,5.2e-2,
+U-235,Inhalation,Type F,Lung,8,5.1e-2,
+U-235,Inhalation,Type F,Lung,9,5.0e-2,
+U-235,Inhalation,Type F,Lung,10,5.0e-2,
+U-235,Inhalation,Type F,Lung,100,2.5e-2,
+U-235,Inhalation,Type M,Urine,1,2.3e-2,
+U-235,Inhalation,Type M,Urine,2,1.1e-3,
+U-235,Inhalation,Type M,Urine,3,8.5e-4,
+U-235,Inhalation,Type M,Urine,4,7.9e-4,
+U-235,Inhalation,Type M,Urine,5,7.3e-4,
+U-235,Inhalation,Type M,Urine,6,6.9e-4,
+U-235,Inhalation,Type M,Urine,7,6.5e-4,
+U-235,Inhalation,Type M,Urine,8,6.1e-4,
+U-235,Inhalation,Type M,Urine,9,5.7e-4,
+U-235,Inhalation,Type M,Urine,10,5.4e-4,
+U-235,Inhalation,Type M,Urine,100,1.4e-4,
+U-235,Inhalation,Type M,Lung,1,6.4e-2,
+U-235,Inhalation,Type M,Lung,2,6.3e-2,
+U-235,Inhalation,Type M,Lung,3,6.2e-2,
+U-235,Inhalation,Type M,Lung,4,6.1e-2,
+U-235,Inhalation,Type M,Lung,5,6.1e-2,
+U-235,Inhalation,Type M,Lung,6,6.0e-2,
+U-235,Inhalation,Type M,Lung,7,6.0e-2,
+U-235,Inhalation,Type M,Lung,8,5.9e-2,
+U-235,Inhalation,Type M,Lung,9,5.8e-2,
+U-235,Inhalation,Type M,Lung,10,5.8e-2,
+U-235,Inhalation,Type M,Lung,100,5.4e-2,
+U-235,Inhalation,Type S,Urine,1,7.0e-4,
+U-235,Inhalation,Type S,Urine,2,4.4e-5,
+U-235,Inhalation,Type S,Urine,3,2.6e-5,
+U-235,Inhalation,Type S,Urine,4,2.4e-5,
+U-235,Inhalation,Type S,Urine,5,2.2e-5,
+U-235,Inhalation,Type S,Urine,6,2.0e-5,
+U-235,Inhalation,Type S,Urine,7,1.9e-5,
+U-235,Inhalation,Type S,Urine,8,1.8e-5,
+U-235,Inhalation,Type S,Urine,9,1.7e-5,
+U-235,Inhalation,Type S,Urine,10,1.6e-5,
+U-235,Inhalation,Type S,Urine,100,6.6e-6,
+U-235,Inhalation,Type S,Feces,1,1.1e-1,
+U-235,Inhalation,Type S,Feces,2,1.6e-1,
+U-235,Inhalation,Type S,Feces,3,8.4e-2,
+U-235,Inhalation,Type S,Feces,4,3.5e-2,
+U-235,Inhalation,Type S,Feces,5,1.4e-2,
+U-235,Inhalation,Type S,Feces,6,5.7e-3,
+U-235,Inhalation,Type S,Feces,7,2.5e-3,
+U-235,Inhalation,Type S,Feces,8,1.3e-3,
+U-235,Inhalation,Type S,Feces,9,8.2e-4,
+U-235,Inhalation,Type S,Feces,10,6.5e-4,
+U-235,Inhalation,Type S,Feces,100,1.2e-4,
+U-235,Inhalation,Type S,Lung,1,6.4e-2,
+U-235,Inhalation,Type S,Lung,2,6.3e-2,
+U-235,Inhalation,Type S,Lung,3,6.2e-2,
+U-235,Inhalation,Type S,Lung,4,6.1e-2,
+U-235,Inhalation,Type S,Lung,5,6.1e-2,
+U-235,Inhalation,Type S,Lung,6,6.0e-2,
+U-235,Inhalation,Type S,Lung,7,6.0e-2,
+U-235,Inhalation,Type S,Lung,8,5.9e-2,
+U-235,Inhalation,Type S,Lung,9,5.8e-2,
+U-235,Inhalation,Type S,Lung,10,5.8e-2,
+U-235,Inhalation,Type S,Lung,100,5.4e-2,
+U-235,Ingestion,,Urine,1,1.3e-2,0.02
+U-235,Ingestion,,Urine,2,6.9e-4,0.02
+U-235,Ingestion,,Urine,3,3.7e-4,0.02
+U-235,Ingestion,,Urine,4,3.3e-4,0.02
+U-235,Ingestion,,Urine,5,3.0e-4,0.02
+U-235,Ingestion,,Urine,6,2.7e-4,0.02
+U-235,Ingestion,,Urine,7,2.5e-4,0.02
+U-235,Ingestion,,Urine,8,2.3e-4,0.02
+U-235,Ingestion,,Urine,9,1.1e-4,0.02
+U-235,Ingestion,,Urine,10,1.9e-4,0.02
+U-235,Ingestion,,Urine,100,8.9e-5,0.02
+U-235,Ingestion,,Urine,1,1.3e-3,0.002
+U-235,Ingestion,,Urine,2,7.0e-5,0.002
+U-235,Ingestion,,Urine,3,3.7e-5,0.002
+U-235,Ingestion,,Urine,4,3.3e-5,0.002
+U-235,Ingestion,,Urine,5,3.0e-5,0.002
+U-235,Ingestion,,Urine,6,2.7e-5,0.002
+U-235,Ingestion,,Urine,7,2.5e-5,0.002
+U-235,Ingestion,,Urine,8,2.3e-5,0.002
+U-235,Ingestion,,Urine,9,2.1e-5,0.002
+U-235,Ingestion,,Urine,10,1.9e-5,0.002
+U-235,Ingestion,,Urine,100,9.2e-7,0.002
+U-235,Injection,,Urine,1,6.5e-1,
+U-235,Injection,,Urine,2,2.2e-2,
+U-235,Injection,,Urine,3,1.8e-2,
+U-235,Injection,,Urine,4,1.6e-2,
+U-235,Injection,,Urine,5,1.5e-2,
+U-235,Injection,,Urine,6,1.3e-2,
+U-235,Injection,,Urine,7,1.2e-2,
+U-235,Injection,,Urine,8,1.1e-2,
+U-235,Injection,,Urine,9,1.0e-2,
+U-235,Injection,,Urine,10,9.4e-3,
+U-235,Injection,,Urine,100,6.4e-4,
