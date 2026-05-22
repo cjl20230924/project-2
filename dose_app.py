@@ -14,6 +14,19 @@ v3.2 新增：
 运行：python dose_app.py
 """
 
+from PyQt5.QtGui import QFont, QColor, QPalette, QIcon
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QGridLayout, QGroupBox, QLabel, QLineEdit, QComboBox, QPushButton,
+    QRadioButton, QButtonGroup, QTableWidget, QTableWidgetItem,
+    QSplitter, QScrollArea, QFrame, QDoubleSpinBox, QSpinBox,
+    QFileDialog, QMessageBox, QTabWidget, QHeaderView, QSizePolicy,
+    QCheckBox, QTextEdit, QProgressBar, QStatusBar, QFormLayout
+)
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+import matplotlib.pyplot as plt
 import sys
 import os
 import warnings
@@ -24,25 +37,13 @@ from scipy.stats import norm
 from sklearn.linear_model import LinearRegression
 import matplotlib
 matplotlib.use('Qt5Agg')
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
 
 # 中文字体支持
-matplotlib.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
+matplotlib.rcParams['font.sans-serif'] = ['SimHei',
+                                          'Microsoft YaHei', 'DejaVu Sans']
 matplotlib.rcParams['axes.unicode_minus'] = False
 matplotlib.rcParams['mathtext.fontset'] = 'stix'  # 数学符号用 STIX，兼容上下标
 
-from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QGridLayout, QGroupBox, QLabel, QLineEdit, QComboBox, QPushButton,
-    QRadioButton, QButtonGroup, QTableWidget, QTableWidgetItem,
-    QSplitter, QScrollArea, QFrame, QDoubleSpinBox, QSpinBox,
-    QFileDialog, QMessageBox, QTabWidget, QHeaderView, QSizePolicy,
-    QCheckBox, QTextEdit, QProgressBar, QStatusBar, QFormLayout
-)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt5.QtGui import QFont, QColor, QPalette, QIcon
 
 warnings.filterwarnings('ignore')
 
@@ -60,11 +61,11 @@ except ImportError as e:
 
 # ==================== 全局常量 ====================
 DATA_DIR = Path("./processed_nuclide_files")
-STAGE_NAMES  = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'Filter']
+STAGE_NAMES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'Filter']
 STAGE_RANGES = ['14.8–21.3 μm', '9.8–14.8 μm', '6.0–9.8 μm', '3.5–6.0 μm',
                 '1.6–3.5 μm',  '0.9–1.6 μm',  '0.5–0.9 μm', '0.1–0.5 μm', '< 0.1 μm']
-CONC_COLS    = ['A_conc','B_conc','C_conc','D_conc','E_conc',
-                'F_conc','G_conc','H_conc','Filter_conc']
+CONC_COLS = ['A_conc', 'B_conc', 'C_conc', 'D_conc', 'E_conc',
+             'F_conc', 'G_conc', 'H_conc', 'Filter_conc']
 
 MASK_PARAMS = {
     "无防护":       {"filtration_efficiency": 0.00, "leakage_rate": 1.00, "is_electret": False, "mpps_um": 0.3},
@@ -89,18 +90,27 @@ def scan_nuclides():
     files = list(DATA_DIR.glob("*.parquet")) + list(DATA_DIR.glob("*.xlsx"))
     for f in files:
         try:
-            df = pd.read_parquet(f) if f.suffix == '.parquet' else pd.read_excel(f)
+            df = pd.read_parquet(
+                f) if f.suffix == '.parquet' else pd.read_excel(f)
             col_map = {}
             for c in df.columns:
                 cl = c.lower().strip()
-                if cl == 'element':            col_map[c] = 'element'
-                elif 'radionuclide' in cl:     col_map[c] = 'radionuclide'
-                elif 'route' in cl:            col_map[c] = 'route_of_intake'
-                elif 'aerosol' in cl:          col_map[c] = 'aerosol_type'
-                elif 'compound' in cl:         col_map[c] = 'compound'
-                elif 'particle' in cl:         col_map[c] = 'particle_size'
-                elif 'dose' in cl:             col_map[c] = 'dose_coefficient'
-                elif cl == 'fa':               col_map[c] = 'fA'
+                if cl == 'element':
+                    col_map[c] = 'element'
+                elif 'radionuclide' in cl:
+                    col_map[c] = 'radionuclide'
+                elif 'route' in cl:
+                    col_map[c] = 'route_of_intake'
+                elif 'aerosol' in cl:
+                    col_map[c] = 'aerosol_type'
+                elif 'compound' in cl:
+                    col_map[c] = 'compound'
+                elif 'particle' in cl:
+                    col_map[c] = 'particle_size'
+                elif 'dose' in cl:
+                    col_map[c] = 'dose_coefficient'
+                elif cl == 'fa':
+                    col_map[c] = 'fA'
             df = df.rename(columns=col_map)
             if 'particle_size' in df.columns:
                 df['particle_size'] = pd.to_numeric(
@@ -109,12 +119,14 @@ def scan_nuclides():
                     .replace(['', 'nan', 'NaN', 'None'], np.nan),
                     errors='coerce')
             if 'dose_coefficient' in df.columns:
-                df['dose_coefficient'] = pd.to_numeric(df['dose_coefficient'], errors='coerce')
+                df['dose_coefficient'] = pd.to_numeric(
+                    df['dose_coefficient'], errors='coerce')
             if 'aerosol_type' in df.columns:
-                df['aerosol_type'] = df['aerosol_type'].replace('Gaseous', 'Unspecified')
+                df['aerosol_type'] = df['aerosol_type'].replace(
+                    'Gaseous', 'Unspecified')
             if 'element' in df.columns and 'radionuclide' in df.columns:
                 elem = str(df['element'].iloc[0])
-                nuc  = str(df['radionuclide'].iloc[0]).replace('_', '-')
+                nuc = str(df['radionuclide'].iloc[0]).replace('_', '-')
                 _nuclide_files[nuc] = (f, df)
                 _element_nuclides_map.setdefault(elem, [])
                 if nuc not in _element_nuclides_map[elem]:
@@ -127,10 +139,12 @@ def _normalize_nuclide(name):
     """归一化核素名：下划线→连字符，去空格"""
     return name.strip().replace('_', '-')
 
+
 # ─ 化合物短名 → (parquet 全名, 对应气溶胶类型) ─
 # aerosol_type 与 parquet 中实际绑定的类型完全一致，不得随意修改
 _COMPOUND_SHORT_TO_FULL = {
-    # Uranium – ICRP 68/72
+    # ==================== Uranium (U) ====================
+    # 根据 ICRP 68/72 分类
     'UO2':         ('Uranium octoxide, uranium dioxide',                                       'Intermediate Type M/S'),
     'U3O8':        ('Uranium octoxide, uranium dioxide',                                       'Intermediate Type M/S'),
     'UO3':         ('Uranyl nitrate, uranium peroxide hydrate, ammonium diuranate, uranium trioxide', 'Intermediate Type F/M'),
@@ -138,23 +152,44 @@ _COMPOUND_SHORT_TO_FULL = {
     'UNH':         ('Uranyl nitrate, uranium peroxide hydrate, ammonium diuranate, uranium trioxide', 'Intermediate Type F/M'),
     'ADU':         ('Uranyl nitrate, uranium peroxide hydrate, ammonium diuranate, uranium trioxide', 'Intermediate Type F/M'),
     'UF6':         ('Uranium hexafluoride, uranyl tributyl-phosphate',                         'Type F'),
+    '铀酰三丁磷酸酯': ('Uranium hexafluoride, uranyl tributyl-phosphate',                         'Type F'),
     'U_metal':     ('Uranyl acetylacetonate; depleted uranium aerosols from use of kinetic energy penetrators; vaporised uranium metal; all unspecified forms', 'Type M'),
-    '铀金属蒸气':  ('Uranyl acetylacetonate; depleted uranium aerosols from use of kinetic energy penetrators; vaporised uranium metal; all unspecified forms', 'Type M'),
+    'UAA':         ('Uranyl acetylacetonate; depleted uranium aerosols from use of kinetic energy penetrators; vaporised uranium metal; all unspecified forms', 'Type M'),
+    '金属铀蒸气':  ('Uranyl acetylacetonate; depleted uranium aerosols from use of kinetic energy penetrators; vaporised uranium metal; all unspecified forms', 'Type M'),
     'DU':          ('Uranyl acetylacetonate; depleted uranium aerosols from use of kinetic energy penetrators; vaporised uranium metal; all unspecified forms', 'Type M'),
+    '未知':        ('Uranyl acetylacetonate; depleted uranium aerosols from use of kinetic energy penetrators; vaporised uranium metal; all unspecified forms', 'Type M'),
     'U aluminide': ('Uranium aluminide',                                                       'Aerosols Uranium aluminide'),
-    # Plutonium – ICRP 68/72
+
+    # ==================== Plutonium (Pu) ====================
+    # 基础化合物（已有）
     'PuO2':        ('Plutonium-239 dioxide, plutonium in mixed oxide',                         'Unspecified'),
     'MOX':         ('Plutonium-239 dioxide, plutonium in mixed oxide',                         'Unspecified'),
     'Pu_nitrate':  ('Plutonium nitrate',                                                       'Unspecified'),
     '硝酸钚':      ('Plutonium nitrate',                                                       'Unspecified'),
     'Pu_citrate':  ('Plutonium citrate, plutonium tri-butyl-phosphate, plutonium chloride',    'Type M'),
-    # Hydrogen / Tritium – ICRP 68
+
+    # 新增钚化合物（从 Pu-238 和 Pu-239 文件中提取）
+    'Pu238O2_ceramic':      ('Plutonium-238 dioxide ceramic',                                 'Unspecified'),
+    'Pu238O2_non_ceramic':  ('Plutonium-238 dioxide non-ceramic',                             'Unspecified'),
+    'PuO2_nanoparticles':   ('Plutonium dioxide 1-nm nanoparticles',                          'Unspecified'),
+    # 注意：Plutonium-239 dioxide, plutonium in mixed oxide 已由 'PuO2' 和 'MOX' 覆盖
+    # Plutonium nitrate 已覆盖
+    # Plutonium citrate... 已覆盖
+
+    # ==================== Hydrogen / Tritium (H-3) ====================
+    # 已有
     'HTO':         ('Gas or vapour Type V, Tritiated water',                                   'Unspecified'),
     '氚化水':      ('Gas or vapour Type V, Tritiated water',                                   'Unspecified'),
     'HT':          ('Gas or vapour Type V, Tritium gas',                                       'Unspecified'),
     '氚气':        ('Gas or vapour Type V, Tritium gas',                                       'Unspecified'),
     'OBT':         ('Biogenic organic compounds',                                              'Unspecified'),
     '有机氚':      ('Biogenic organic compounds',                                              'Unspecified'),
+
+    # 新增氚化合物（从 H-3 文件中提取）
+    'LaNiAl_tritide':   ('LaNiAl tritide',                                                     'Type F'),
+    'TiZr_tritide':     ('All unspecified compounds, glass fragments, luminous paint, titanium tritide, zirconium tritide', 'Type M'),
+    'C_Hf_tritide':     ('Carbon tritide, hafnium tritide',                                    'Type S'),
+    'Tritiated_methane': ('Gas or vapour Type V, Tritiated methane',                            'Unspecified'),
 }
 
 
@@ -188,17 +223,20 @@ def interp_dose_coeff(df, aerosol_type, particle_size_um):
     sub = df[df['aerosol_type'] == aerosol_type].copy()
     if sub.empty:
         return None
-    sub = sub.dropna(subset=['particle_size', 'dose_coefficient']).sort_values('particle_size')
+    sub = sub.dropna(subset=['particle_size', 'dose_coefficient']).sort_values(
+        'particle_size')
     if sub.empty:
         row0 = df[df['aerosol_type'] == aerosol_type]
         return row0['dose_coefficient'].iloc[0] if not row0.empty else None
-    ps  = sub['particle_size'].values
+    ps = sub['particle_size'].values
     dcs = sub['dose_coefficient'].values
     if len(ps) == 1:
         return dcs[0]
-    if particle_size_um <= ps.min(): return dcs[0]
-    if particle_size_um >= ps.max(): return dcs[-1]
-    log_x  = np.log(particle_size_um)
+    if particle_size_um <= ps.min():
+        return dcs[0]
+    if particle_size_um >= ps.max():
+        return dcs[-1]
+    log_x = np.log(particle_size_um)
     log_ps = np.log(ps)
     for i in range(len(log_ps) - 1):
         if log_ps[i] <= log_x <= log_ps[i + 1]:
@@ -211,11 +249,11 @@ def interp_dose_coeff(df, aerosol_type, particle_size_um):
 def calc_mask_pf(mask_type, particle_size_um=None):
     if mask_type == "无防护":
         return 1.0
-    p       = MASK_PARAMS.get(mask_type, MASK_PARAMS["无防护"])
+    p = MASK_PARAMS.get(mask_type, MASK_PARAMS["无防护"])
     base_eff = p["filtration_efficiency"]
-    leak     = p["leakage_rate"]
-    mpps     = p["mpps_um"]
-    is_elec  = p["is_electret"]
+    leak = p["leakage_rate"]
+    mpps = p["mpps_um"]
+    is_elec = p["is_electret"]
     if particle_size_um is None:
         adj_eff = base_eff
     else:
@@ -228,8 +266,8 @@ def calc_mask_pf(mask_type, particle_size_um=None):
             elif abs(size - mpps) < 1e-6:
                 adj_eff = base_eff
             else:
-                dist    = abs(size - mpps)
-                boost   = min(dist / mpps * 0.15, 0.09)
+                dist = abs(size - mpps)
+                boost = min(dist / mpps * 0.15, 0.09)
                 adj_eff = min(base_eff + boost, 0.99)
     return leak + (1 - adj_eff) * (1 - leak)
 
@@ -241,8 +279,8 @@ class CalcThread(QThread):
 
     def __init__(self, func, *args, **kwargs):
         super().__init__()
-        self.func   = func
-        self.args   = args
+        self.func = func
+        self.args = args
         self.kwargs = kwargs
 
     def run(self):
@@ -275,11 +313,12 @@ class PlotCanvas(FigureCanvas):
         """
         self.fig.clear()
         data_label = "防护后校正浓度" if is_corrected else "防护前浓度（效率校正）"
-        plot_note  = "（图中散点 = 口罩防护校正后数据）" if is_corrected else "（图中散点 = 防护前数据，效率校正）"
+        plot_note = "（图中散点 = 口罩防护校正后数据）" if is_corrected else "（图中散点 = 防护前数据，效率校正）"
 
         x_plot = np.logspace(np.log10(0.1), np.log10(50), 300)
         stage_widths = np.log(stages_high / stages_low)
-        data_density = corrected / stage_widths / total_corr if total_corr > 0 else corrected
+        data_density = corrected / stage_widths / \
+            total_corr if total_corr > 0 else corrected
 
         y_uni = lognormal_pdf(x_plot, amad_uni, gsd_uni) * total_uni / total_corr \
             if total_corr > 0 else np.zeros_like(x_plot)
@@ -293,7 +332,8 @@ class PlotCanvas(FigureCanvas):
 
         # ── 左上：单峰拟合 ──
         ax = axes[0, 0]
-        ax.semilogx(x_plot, y_uni, 'b-', lw=2, label=f'单峰 AMAD={amad_uni:.2f} $\mu m$')
+        ax.semilogx(x_plot, y_uni, 'b-', lw=2,
+                    label=f'单峰 AMAD={amad_uni:.2f} $\mu m$')
         ax.scatter(midpoints, data_density, c=scatter_color, s=50, edgecolors='k', zorder=5,
                    label=data_label)
         ax.set_xlabel('空气动力学粒径 ($\mu m$)', fontsize=9)
@@ -308,11 +348,13 @@ class PlotCanvas(FigureCanvas):
         ax = axes[0, 1]
         if not np.isnan(amad2):
             y_coarse = frac1 * lognormal_pdf(x_plot, amad1, gsd1)
-            y_fine   = (1 - frac1) * lognormal_pdf(x_plot, amad2, gsd2)
-            y_total  = y_coarse + y_fine
+            y_fine = (1 - frac1) * lognormal_pdf(x_plot, amad2, gsd2)
+            y_total = y_coarse + y_fine
             ax.semilogx(x_plot, y_total, 'k-', lw=2, label='总拟合')
-            ax.semilogx(x_plot, y_coarse, 'b--', lw=1.5, label=f'粗峰 {amad1:.1f} $\mu m$')
-            ax.semilogx(x_plot, y_fine, 'r--', lw=1.5, label=f'细峰 {amad2:.1f} $\mu m$')
+            ax.semilogx(x_plot, y_coarse, 'b--', lw=1.5,
+                        label=f'粗峰 {amad1:.1f} $\mu m$')
+            ax.semilogx(x_plot, y_fine, 'r--', lw=1.5,
+                        label=f'细峰 {amad2:.1f} $\mu m$')
         else:
             ax.semilogx(x_plot, y_uni, 'k--', lw=2, label='未检测到双峰')
         ax.scatter(midpoints, data_density, c=scatter_color, s=50, edgecolors='k', zorder=5,
@@ -332,7 +374,7 @@ class PlotCanvas(FigureCanvas):
 
         if total_ra > 0:
             # 累积小于某粒径的活度百分比（ICRP 推荐算法）
-            f     = raw_acts / total_ra
+            f = raw_acts / total_ra
             f_all = np.concatenate([f, [filter_act / total_ra]])
             cum_from_fine = np.cumsum(np.flip(f_all))[:-1]
             cum_less = np.flip(cum_from_fine) * 100
@@ -355,7 +397,8 @@ class PlotCanvas(FigureCanvas):
                 ax.set_xscale('log')
                 ax.set_xlim(0.3, 30)
 
-                percentiles = [1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 99]
+                percentiles = [1, 5, 10, 20, 30,
+                               40, 50, 60, 70, 80, 90, 95, 99]
                 probit_ticks = norm.ppf(np.array(percentiles) / 100)
                 ax.set_yticks(probit_ticks)
                 ax.set_yticklabels([str(p) for p in percentiles], fontsize=7)
@@ -441,10 +484,12 @@ class NuclideCompoundWidget(QFrame):
     行2: 气溶胶类型（自动推断提示 + 手动覆盖下拉）
     行3: 核素丰度
     """
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFrameShape(QFrame.StyledPanel)
-        self.setStyleSheet("QFrame { border:1px solid #cce0ff; border-radius:5px; background:#f8fbff; }")
+        self.setStyleSheet(
+            "QFrame { border:1px solid #cce0ff; border-radius:5px; background:#f8fbff; }")
         outer = QVBoxLayout(self)
         outer.setContentsMargins(6, 4, 6, 4)
         outer.setSpacing(3)
@@ -515,7 +560,8 @@ class NuclideCompoundWidget(QFrame):
         lbl_nuc = QLabel("核素丰度:")
         lbl_nuc.setFixedWidth(62)
         self.nuclides_edit = QLineEdit("U_238:0.993|U_235:0.007")
-        self.nuclides_edit.setPlaceholderText("格式：核素:比例|核素:比例  例如 U_238:0.993|U_235:0.007")
+        self.nuclides_edit.setPlaceholderText(
+            "格式：核素:比例|核素:比例  例如 U_238:0.993|U_235:0.007")
         row3.addWidget(lbl_nuc)
         row3.addWidget(self.nuclides_edit, 1)
         outer.addLayout(row3)
@@ -552,7 +598,8 @@ class NuclideCompoundWidget(QFrame):
         compound = self.compound_edit.text().strip()
         # 优先使用自动推断；若化合物不在映射表则使用 combo 手动选择值
         result = _COMPOUND_SHORT_TO_FULL.get(compound)
-        aerosol_type = result[1] if result else self.aerosol_combo.currentText()
+        aerosol_type = result[1] if result else self.aerosol_combo.currentText(
+        )
         return {
             'compound':          compound,
             'aerosol_type':      aerosol_type,
@@ -577,9 +624,9 @@ class DoseCalcApp(QMainWindow):
         self.setMinimumSize(1100, 700)
         self.resize(1440, 860)
 
-        self._fit_result  = None
+        self._fit_result = None
         self._calc_thread = None
-        self._file_df     = None
+        self._file_df = None
 
         self._setup_ui()
         self._scan_data()
@@ -644,7 +691,7 @@ class DoseCalcApp(QMainWindow):
         # 数据来源选择
         src_row = QHBoxLayout()
         self.rb_manual = QRadioButton("手动输入各级浓度")
-        self.rb_file   = QRadioButton("从 CSV / Excel 读取")
+        self.rb_file = QRadioButton("从 CSV / Excel 读取")
         self.rb_manual.setChecked(True)
         bg = QButtonGroup(self)
         bg.addButton(self.rb_manual)
@@ -664,8 +711,10 @@ class DoseCalcApp(QMainWindow):
         btn_browse = QPushButton("浏览…")
         btn_browse.setFixedWidth(56)
         btn_browse.clicked.connect(self._browse_file)
-        self.ws_combo  = QComboBox(); self.ws_combo.setMinimumWidth(90)
-        self.sid_combo = QComboBox(); self.sid_combo.setMinimumWidth(90)
+        self.ws_combo = QComboBox()
+        self.ws_combo.setMinimumWidth(90)
+        self.sid_combo = QComboBox()
+        self.sid_combo.setMinimumWidth(90)
         self.ws_combo.currentTextChanged.connect(self._on_ws_changed)
         self.sid_combo.currentTextChanged.connect(self._on_sid_changed)
         fr.addWidget(QLabel("文件:"),          0, 0)
@@ -684,9 +733,11 @@ class DoseCalcApp(QMainWindow):
         g1.addWidget(conc_lbl)
 
         self.conc_table = QTableWidget(9, 2)
-        self.conc_table.setHorizontalHeaderLabels(["级别 / 粒径范围", "活度浓度 (Bq/m³)"])
+        self.conc_table.setHorizontalHeaderLabels(
+            ["级别 / 粒径范围", "活度浓度 (Bq/m³)"])
         self.conc_table.verticalHeader().setVisible(False)
-        self.conc_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.conc_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeToContents)
         self.conc_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.conc_table.setAlternatingRowColors(True)
         self.conc_table.setMinimumHeight(258)
@@ -732,14 +783,18 @@ class DoseCalcApp(QMainWindow):
 
         g4.addWidget(QLabel("呼吸速率 BR (m³/h):"), 1, 0)
         self.br_spin = QDoubleSpinBox()
-        self.br_spin.setRange(0.1, 5.0); self.br_spin.setValue(1.2)
-        self.br_spin.setSingleStep(0.1); self.br_spin.setDecimals(2)
+        self.br_spin.setRange(0.1, 5.0)
+        self.br_spin.setValue(1.2)
+        self.br_spin.setSingleStep(0.1)
+        self.br_spin.setDecimals(2)
         g4.addWidget(self.br_spin, 1, 1)
 
         g4.addWidget(QLabel("工作时长 T (h):"), 1, 2)
         self.work_spin = QDoubleSpinBox()
-        self.work_spin.setRange(0.5, 24.0); self.work_spin.setValue(8.0)
-        self.work_spin.setSingleStep(0.5); self.work_spin.setDecimals(1)
+        self.work_spin.setRange(0.5, 24.0)
+        self.work_spin.setValue(8.0)
+        self.work_spin.setSingleStep(0.5)
+        self.work_spin.setDecimals(1)
         g4.addWidget(self.work_spin, 1, 3)
 
         self._update_mask_info()
@@ -769,10 +824,10 @@ class DoseCalcApp(QMainWindow):
         g2 = QVBoxLayout(grp2)
         g2.setSpacing(3)
 
-        self.rb_std    = QRadioButton("方法1 · 国标单AMAD（固定 5 μm）")
-        self.rb_modal  = QRadioButton("方法2 · 多模态拟合（单峰/双峰自动判断）")
+        self.rb_std = QRadioButton("方法1 · 国标单AMAD（固定 5 μm）")
+        self.rb_modal = QRadioButton("方法2 · 多模态拟合（单峰/双峰自动判断）")
         self.rb_probit = QRadioButton("方法3 · 正态概率图法（直线拟合）")
-        self.rb_stage  = QRadioButton("方法4 · 逐级独立法（每级视为均质源）")
+        self.rb_stage = QRadioButton("方法4 · 逐级独立法（每级视为均质源）")
         self.rb_std.setChecked(True)
         bg2 = QButtonGroup(self)
         _hints = {
@@ -804,7 +859,7 @@ class DoseCalcApp(QMainWindow):
         nuc_mode_row = QHBoxLayout()
         nuc_mode_lbl = QLabel("配置模式：")
         nuc_mode_lbl.setStyleSheet("font-weight:bold; color:#1a5276;")
-        self.rb_nuc_auto   = QRadioButton("自动从采样数据读取")
+        self.rb_nuc_auto = QRadioButton("自动从采样数据读取")
         self.rb_nuc_manual = QRadioButton("手动输入")
         self.rb_nuc_manual.setChecked(True)
         bg_nuc = QButtonGroup(self)
@@ -947,7 +1002,7 @@ class DoseCalcApp(QMainWindow):
         tdl.addWidget(self.accum_table)
 
         accum_btn_row = QHBoxLayout()
-        btn_add_accum   = QPushButton("➕ 将本次结果加入累计")
+        btn_add_accum = QPushButton("➕ 将本次结果加入累计")
         btn_clear_accum = QPushButton("🗑 清空累计")
         btn_add_accum.clicked.connect(self._add_to_accum)
         btn_clear_accum.clicked.connect(self._clear_accum)
@@ -1021,7 +1076,8 @@ class DoseCalcApp(QMainWindow):
         if elems:
             self._on_elem_changed(elems[0])
         n_nuclides = sum(len(v) for v in _element_nuclides_map.values())
-        self.status_bar.showMessage(f"已加载 {len(elems)} 个元素 / {n_nuclides} 种核素  |  就绪")
+        self.status_bar.showMessage(
+            f"已加载 {len(elems)} 个元素 / {n_nuclides} 种核素  |  就绪")
 
     # ─────────────────────────────────────────────────────────
     # 交互回调
@@ -1047,7 +1103,8 @@ class DoseCalcApp(QMainWindow):
             return
         self.file_path_edit.setText(path)
         try:
-            self._file_df = pd.read_csv(path) if path.endswith('.csv') else pd.read_excel(path)
+            self._file_df = pd.read_csv(path) if path.endswith(
+                '.csv') else pd.read_excel(path)
             ws_list = sorted(self._file_df['Workshop'].unique())
             self.ws_combo.blockSignals(True)
             self.ws_combo.clear()
@@ -1073,7 +1130,7 @@ class DoseCalcApp(QMainWindow):
     def _on_sid_changed(self, sid):
         if self._file_df is None:
             return
-        ws   = self.ws_combo.currentText()
+        ws = self.ws_combo.currentText()
         mask = ((self._file_df['Workshop'].astype(str) == ws) &
                 (self._file_df['SamplingID'].astype(str) == sid))
         rows = self._file_df[mask]
@@ -1093,8 +1150,8 @@ class DoseCalcApp(QMainWindow):
 
     def _fill_compounds_from_row(self, row):
         try:
-            comps  = str(row.get('compounds', '')).split(';')
-            fracs  = str(row.get('activity_fractions', '')).split(';')
+            comps = str(row.get('compounds', '')).split(';')
+            fracs = str(row.get('activity_fractions', '')).split(';')
             abunds = str(row.get('nuclide_abundances', '')).split(';')
             # 直接清空，绕过"至少保留一个"保护（此处是程序内部触发，非用户手动删除）
             for w in list(self._compound_widgets):
@@ -1152,25 +1209,28 @@ class DoseCalcApp(QMainWindow):
 
     def _update_mask_info(self):
         mtype = self.mask_combo.currentText()
-        p     = MASK_PARAMS.get(mtype, {})
-        eff   = p.get('filtration_efficiency', 0)
-        leak  = p.get('leakage_rate', 1)
+        p = MASK_PARAMS.get(mtype, {})
+        eff = p.get('filtration_efficiency', 0)
+        leak = p.get('leakage_rate', 1)
         self.mask_info_lbl.setText(f"过滤效率 {eff:.0%}  泄漏率 {leak:.0%}")
 
     def _update_method_hints(self):
         selected_rbs = [r for r in self._hint_lbls if r.isChecked()]
         for rb, hl in self._hint_lbls.items():
             if rb.isChecked():
-                hl.setStyleSheet("color:#1a5276; font-size:10px; font-weight:bold; margin-left:16px;")
+                hl.setStyleSheet(
+                    "color:#1a5276; font-size:10px; font-weight:bold; margin-left:16px;")
             else:
-                hl.setStyleSheet("color:#999; font-size:10px; margin-left:16px;")
+                hl.setStyleSheet(
+                    "color:#999; font-size:10px; margin-left:16px;")
 
     # ─────────────────────────────────────────────────────────
     # 手动拟合（选好数据后点击「运行拟合」按钮触发）
     # ─────────────────────────────────────────────────────────
     def _on_fit(self):
         """手动触发：运行三种拟合并更新图表"""
-        raw_concs = np.array([sp.value() for sp in self.conc_spins], dtype=float)
+        raw_concs = np.array([sp.value()
+                             for sp in self.conc_spins], dtype=float)
         if np.sum(raw_concs) == 0:
             return
 
@@ -1183,18 +1243,22 @@ class DoseCalcApp(QMainWindow):
 
             amad_uni, gsd_uni, total_uni = fit_unimodal(eff_corr)
             amad1, gsd1, frac1, amad2, gsd2, total_bi = fit_bimodal(eff_corr)
-            D50_lin, GSD_lin, D84_lin, D16_lin, R2_lin = fit_linear_probit(raw_concs)
+            D50_lin, GSD_lin, D84_lin, D16_lin, R2_lin = fit_linear_probit(
+                raw_concs)
 
             # AIC/BIC 计算
-            aic_uni, bic_uni = calc_unimodal_stats(amad_uni, gsd_uni, total_uni, eff_corr)
+            aic_uni, bic_uni = calc_unimodal_stats(
+                amad_uni, gsd_uni, total_uni, eff_corr)
             aic_bi, bic_bi = (np.nan, np.nan)
             if not np.isnan(amad2):
                 aic_bi, bic_bi = calc_bimodal_stats(
                     amad1, gsd1, frac1, amad2, gsd2, total_bi, eff_corr)
             # probit 的 AIC/BIC（独立于上面的 fit_linear_probit，额外算 stats）
-            D50_pb, GSD_pb, R2_pb, aic_pb, bic_pb, n_pb = calc_probit_stats(raw_concs)
+            D50_pb, GSD_pb, R2_pb, aic_pb, bic_pb, n_pb = calc_probit_stats(
+                raw_concs)
 
-            ratio = amad1 / amad2 if not np.isnan(amad2) and amad2 > 0 else np.nan
+            ratio = amad1 / \
+                amad2 if not np.isnan(amad2) and amad2 > 0 else np.nan
             recommended = recommend_method(
                 amad2, ratio, frac1, R2_lin,
                 aic_uni=aic_uni, bic_uni=bic_uni,
@@ -1238,7 +1302,8 @@ class DoseCalcApp(QMainWindow):
             if not np.isnan(D50_lin):
                 parts.append(f"正态概率图 AMAD={D50_lin:.3f} \u03bcm  GSD={GSD_lin:.3f}  R\u00b2={R2_lin:.4f}"
                              f"  AIC={aic_pb:.1f}")
-            parts.append(f"数据质量: {quality['quality_flag']}（非零级数={quality['n_nonzero']}/9）")
+            parts.append(
+                f"数据质量: {quality['quality_flag']}（非零级数={quality['n_nonzero']}/9）")
             self.fit_info_lbl.setText("  \n".join(parts))
 
             self.log_edit.append(f"[拟合] 单峰 AMAD={amad_uni:.3f}  AIC={aic_uni:.1f} | "
@@ -1255,7 +1320,8 @@ class DoseCalcApp(QMainWindow):
     # 核心计算入口
     # ─────────────────────────────────────────────────────────
     def _on_calc(self):
-        raw_concs = np.array([sp.value() for sp in self.conc_spins], dtype=float)
+        raw_concs = np.array([sp.value()
+                             for sp in self.conc_spins], dtype=float)
         if np.sum(raw_concs) == 0:
             QMessageBox.warning(self, "数据为空", "所有级别浓度均为零，请先输入数据。")
             return
@@ -1264,11 +1330,11 @@ class DoseCalcApp(QMainWindow):
         self.status_bar.showMessage("计算中，请稍候…")
         self.log_edit.clear()
 
-        mask_type  = self.mask_combo.currentText()
-        br         = self.br_spin.value()
+        mask_type = self.mask_combo.currentText()
+        br = self.br_spin.value()
         work_hours = self.work_spin.value()
-        elem       = self.elem_combo.currentText()
-        nucs_elem  = _element_nuclides_map.get(elem, [])
+        elem = self.elem_combo.currentText()
+        nucs_elem = _element_nuclides_map.get(elem, [])
 
         compounds_data = [w.get_data() for w in self._compound_widgets]
         total_frac = sum(c['activity_fraction'] for c in compounds_data)
@@ -1276,8 +1342,8 @@ class DoseCalcApp(QMainWindow):
             for c in compounds_data:
                 c['activity_fraction'] /= total_frac
 
-        method = ('std'    if self.rb_std.isChecked()    else
-                  'modal'  if self.rb_modal.isChecked()  else
+        method = ('std' if self.rb_std.isChecked() else
+                  'modal' if self.rb_modal.isChecked() else
                   'probit' if self.rb_probit.isChecked() else 'stage')
 
         self._calc_thread = CalcThread(
@@ -1301,13 +1367,13 @@ class DoseCalcApp(QMainWindow):
             raw_concs[i] * calc_mask_pf(mask_type, midpoints[i])
             for i in range(len(raw_concs))
         ], dtype=float)
-        total_raw    = float(np.sum(raw_concs))
+        total_raw = float(np.sum(raw_concs))
         total_masked = float(np.sum(corrected_concs))
         mask_pf_overall = total_masked / total_raw if total_raw > 0 else 1.0
         log(f"原始总浓度: {total_raw:.4e} Bq/m³  校正后: {total_masked:.4e} Bq/m³  防护因子: {mask_pf_overall:.4f}")
 
         # AMAD 拟合
-        eff_corr   = apply_efficiency_correction(corrected_concs)
+        eff_corr = apply_efficiency_correction(corrected_concs)
         total_corr = float(np.sum(eff_corr))
 
         if method == 'std':
@@ -1332,11 +1398,13 @@ class DoseCalcApp(QMainWindow):
             amad1, gsd1, frac1, amad2, gsd2, total_bi = fit_bimodal(eff_corr)
             log(f"  双峰: 粗峰={amad1:.3f} μm  细峰={amad2:.3f} μm  粗峰占比={frac1:.3f}")
             log("正态概率图拟合…")
-            D50_lin, GSD_lin, D84_lin, D16_lin, R2_lin = fit_linear_probit(corrected_concs)
+            D50_lin, GSD_lin, D84_lin, D16_lin, R2_lin = fit_linear_probit(
+                corrected_concs)
             log(f"  正态概率图: AMAD={D50_lin:.3f} μm  GSD={GSD_lin:.3f}  R²={R2_lin:.4f}")
 
             # AIC/BIC 计算
-            aic_uni, bic_uni = calc_unimodal_stats(amad_uni, gsd_uni, total_uni, eff_corr)
+            aic_uni, bic_uni = calc_unimodal_stats(
+                amad_uni, gsd_uni, total_uni, eff_corr)
             aic_bi, bic_bi = (np.nan, np.nan)
             if not np.isnan(amad2):
                 aic_bi, bic_bi = calc_bimodal_stats(
@@ -1344,7 +1412,8 @@ class DoseCalcApp(QMainWindow):
             log(f"  AIC: 单峰={aic_uni:.1f}  双峰={aic_bi:.1f}  |  BIC: 单峰={bic_uni:.1f}  双峰={bic_bi:.1f}")
             log(f"  数据质量: {quality['quality_flag']}（非零级数={quality['n_nonzero']}/9）")
 
-            ratio = amad1 / amad2 if not np.isnan(amad2) and amad2 > 0 else np.nan
+            ratio = amad1 / \
+                amad2 if not np.isnan(amad2) and amad2 > 0 else np.nan
             recommended = recommend_method(
                 amad2, ratio, frac1, R2_lin,
                 aic_uni=aic_uni, bic_uni=bic_uni,
@@ -1354,7 +1423,8 @@ class DoseCalcApp(QMainWindow):
             )
             log(f"推荐方法: {recommended}")
 
-            D50_pb, GSD_pb, R2_pb, aic_pb, bic_pb, n_pb = calc_probit_stats(corrected_concs)
+            D50_pb, GSD_pb, R2_pb, aic_pb, bic_pb, n_pb = calc_probit_stats(
+                corrected_concs)
 
             fit_res = {
                 'method': 'modal', 'recommended': recommended,
@@ -1368,16 +1438,21 @@ class DoseCalcApp(QMainWindow):
                 'quality': quality,
             }
             if 'Bimodal' in recommended:
-                fit_res['amad'] = amad1; fit_res['gsd'] = gsd1
+                fit_res['amad'] = amad1
+                fit_res['gsd'] = gsd1
             elif '正态概率' in recommended and not np.isnan(D50_lin):
-                fit_res['amad'] = D50_lin; fit_res['gsd'] = GSD_lin
+                fit_res['amad'] = D50_lin
+                fit_res['gsd'] = GSD_lin
             elif '国标' in recommended:
-                fit_res['amad'] = 5.0; fit_res['gsd'] = 1.5
+                fit_res['amad'] = 5.0
+                fit_res['gsd'] = 1.5
             else:
-                fit_res['amad'] = amad_uni; fit_res['gsd'] = gsd_uni
+                fit_res['amad'] = amad_uni
+                fit_res['gsd'] = gsd_uni
 
         elif method == 'probit':
-            D50_lin, GSD_lin, D84_lin, D16_lin, R2_lin = fit_linear_probit(corrected_concs)
+            D50_lin, GSD_lin, D84_lin, D16_lin, R2_lin = fit_linear_probit(
+                corrected_concs)
             log(f"正态概率图: AMAD={D50_lin:.3f} μm  GSD={GSD_lin:.3f}  R²={R2_lin:.4f}")
             if np.isnan(D50_lin):
                 raise ValueError("正态概率图拟合失败（有效数据点 < 3），请检查浓度数据。")
@@ -1405,12 +1480,12 @@ class DoseCalcApp(QMainWindow):
 
         # ─ 剂量计算 ─
         detail_rows = []
-        total_dose  = 0.0
+        total_dose = 0.0
 
         for comp_data in compounds_data:
-            compound     = comp_data['compound']
+            compound = comp_data['compound']
             aerosol_type = comp_data['aerosol_type']
-            act_frac     = comp_data['activity_fraction']
+            act_frac = comp_data['activity_fraction']
             nuclides_abu = comp_data['nuclides']
             log(f"\n--- 化合物: {compound}  气溶胶: {aerosol_type}  活度比例: {act_frac:.3f} ---")
 
@@ -1454,15 +1529,18 @@ class DoseCalcApp(QMainWindow):
                     dose_nuc = 0.0
                     for si in range(len(STAGE_NAMES)):
                         conc_si = corrected_concs[si] * act_frac * abundance
-                        dp_mid  = midpoints[si]
-                        e_val   = interp_dose_coeff(sub, effective_aerosol, dp_mid)
+                        dp_mid = midpoints[si]
+                        e_val = interp_dose_coeff(
+                            sub, effective_aerosol, dp_mid)
                         if e_val is None:
-                            e_val = interp_dose_coeff(sub, 'Unspecified', dp_mid)
+                            e_val = interp_dose_coeff(
+                                sub, 'Unspecified', dp_mid)
                         if e_val is None:
                             continue
                         d_si = e_val * conc_si * br * work_hours
                         dose_nuc += d_si
-                        log(f"    级{STAGE_NAMES[si]}({dp_mid:.2f}μm) e={e_val:.2e} C={conc_si:.3e} D={d_si:.3e}")
+                        log(
+                            f"    级{STAGE_NAMES[si]}({dp_mid:.2f}μm) e={e_val:.2e} C={conc_si:.3e} D={d_si:.3e}")
                     log(f"  逐级合计: {dose_nuc:.3e} Sv")
                     detail_rows.append({
                         'compound': compound, 'aerosol_type': effective_aerosol,
@@ -1474,26 +1552,40 @@ class DoseCalcApp(QMainWindow):
                     total_dose += dose_nuc
 
                 elif method == 'modal' and 'Bimodal' in fit_res.get('recommended', ''):
-                    amad1 = fit_res['amad1']; gsd1 = fit_res['gsd1']; frac1 = fit_res['frac1']
-                    amad2 = fit_res['amad2']; frac2 = 1 - frac1
+                    amad1 = fit_res['amad1']
+                    gsd1 = fit_res['gsd1']
+                    frac1 = fit_res['frac1']
+                    amad2 = fit_res['amad2']
+                    frac2 = 1 - frac1
 
                     pk1_integ = np.array([
-                        stage_integral(amad1, gsd1, stages_low[i], stages_high[i])
+                        stage_integral(
+                            amad1, gsd1, stages_low[i], stages_high[i])
                         for i in range(len(STAGE_NAMES))
                     ])
                     pk2_integ = np.array([
-                        stage_integral(amad2, fit_res['gsd2'], stages_low[i], stages_high[i])
+                        stage_integral(
+                            amad2, fit_res['gsd2'], stages_low[i], stages_high[i])
                         for i in range(len(STAGE_NAMES))
                     ])
-                    s1 = float(np.sum(pk1_integ)); s2 = float(np.sum(pk2_integ))
-                    sh1 = pk1_integ / s1 if s1 > 0 else np.ones(len(STAGE_NAMES)) / len(STAGE_NAMES)
-                    sh2 = pk2_integ / s2 if s2 > 0 else np.ones(len(STAGE_NAMES)) / len(STAGE_NAMES)
+                    s1 = float(np.sum(pk1_integ))
+                    s2 = float(np.sum(pk2_integ))
+                    sh1 = pk1_integ / \
+                        s1 if s1 > 0 else np.ones(
+                            len(STAGE_NAMES)) / len(STAGE_NAMES)
+                    sh2 = pk2_integ / \
+                        s2 if s2 > 0 else np.ones(
+                            len(STAGE_NAMES)) / len(STAGE_NAMES)
 
-                    c1 = float(np.sum(corrected_concs * sh1)) * frac1 * act_frac * abundance
-                    c2 = float(np.sum(corrected_concs * sh2)) * frac2 * act_frac * abundance
+                    c1 = float(np.sum(corrected_concs * sh1)) * \
+                        frac1 * act_frac * abundance
+                    c2 = float(np.sum(corrected_concs * sh2)) * \
+                        frac2 * act_frac * abundance
 
-                    e1 = interp_dose_coeff(sub, effective_aerosol, amad1) or interp_dose_coeff(sub, 'Unspecified', amad1)
-                    e2 = interp_dose_coeff(sub, effective_aerosol, amad2) or interp_dose_coeff(sub, 'Unspecified', amad2)
+                    e1 = interp_dose_coeff(sub, effective_aerosol, amad1) or interp_dose_coeff(
+                        sub, 'Unspecified', amad1)
+                    e2 = interp_dose_coeff(sub, effective_aerosol, amad2) or interp_dose_coeff(
+                        sub, 'Unspecified', amad2)
 
                     d1 = (e1 * c1 * br * work_hours) if e1 else 0.0
                     d2 = (e2 * c2 * br * work_hours) if e2 else 0.0
@@ -1513,14 +1605,18 @@ class DoseCalcApp(QMainWindow):
 
                 else:
                     amad_use = fit_res.get('amad', 5.0)
-                    gsd_use  = fit_res.get('gsd', 1.5)
+                    gsd_use = fit_res.get('gsd', 1.5)
                     pk_integ = np.array([
-                        stage_integral(amad_use, gsd_use, stages_low[i], stages_high[i])
+                        stage_integral(amad_use, gsd_use,
+                                       stages_low[i], stages_high[i])
                         for i in range(len(STAGE_NAMES))
                     ])
-                    s_integ  = float(np.sum(pk_integ))
-                    pk_share = pk_integ / s_integ if s_integ > 0 else np.ones(len(STAGE_NAMES)) / len(STAGE_NAMES)
-                    c_equiv  = float(np.sum(corrected_concs * pk_share)) * act_frac * abundance
+                    s_integ = float(np.sum(pk_integ))
+                    pk_share = pk_integ / \
+                        s_integ if s_integ > 0 else np.ones(
+                            len(STAGE_NAMES)) / len(STAGE_NAMES)
+                    c_equiv = float(
+                        np.sum(corrected_concs * pk_share)) * act_frac * abundance
 
                     e_val = interp_dose_coeff(sub, effective_aerosol, amad_use)
                     if e_val is None:
@@ -1569,19 +1665,22 @@ class DoseCalcApp(QMainWindow):
         try:
             self.plot_canvas.plot_fitting(
                 res['raw_concs'], res['eff_corr'],
-                fit.get('amad_uni', 5.0), fit.get('gsd_uni', 1.5), fit.get('total_uni', 1.0),
-                fit.get('amad1', 5.0), fit.get('gsd1', 1.5), fit.get('frac1', 1.0),
+                fit.get('amad_uni', 5.0), fit.get(
+                    'gsd_uni', 1.5), fit.get('total_uni', 1.0),
+                fit.get('amad1', 5.0), fit.get(
+                    'gsd1', 1.5), fit.get('frac1', 1.0),
                 fit.get('amad2', np.nan), fit.get('gsd2', np.nan),
                 fit.get('total_uni', 1.0), res['total_corr'],
-                fit.get('D50_lin', np.nan), fit.get('GSD_lin', np.nan), fit.get('R2_lin', np.nan),
+                fit.get('D50_lin', np.nan), fit.get(
+                    'GSD_lin', np.nan), fit.get('R2_lin', np.nan),
                 is_corrected=True
             )
         except Exception as e:
             self._log(f"[图] 绘图失败: {e}")
 
         # 拟合参数信息
-        rec    = fit.get('recommended', '')
-        parts  = [f"【推荐/使用方法】{rec}"]
+        rec = fit.get('recommended', '')
+        parts = [f"【推荐/使用方法】{rec}"]
         amad_uni = fit.get('amad_uni', 5)
         parts.append(f"单峰 AMAD={amad_uni:.3f} \u03bcm  GSD={fit.get('gsd_uni', 1.5):.3f}"
                      f"  AIC={fit.get('aic_uni', np.nan):.1f}  BIC={fit.get('bic_uni', np.nan):.1f}")
@@ -1605,7 +1704,8 @@ class DoseCalcApp(QMainWindow):
         for row in res['detail_rows']:
             r = self.result_table.rowCount()
             self.result_table.insertRow(r)
-            e_s = f"{row['e_val']:.3e}" if not np.isnan(row.get('e_val', np.nan)) else "逐级"
+            e_s = f"{row['e_val']:.3e}" if not np.isnan(
+                row.get('e_val', np.nan)) else "逐级"
             vals = [row['compound'], row['aerosol_type'], row['nuclide'],
                     str(row['amad']), e_s,
                     f"{row['act_conc']:.4e}", f"{row['dose']:.4e}"]
@@ -1646,12 +1746,12 @@ class DoseCalcApp(QMainWindow):
             QMessageBox.information(self, "提示", "请先完成一次计算")
             return
         res = self._fit_result
-        mn  = {'std': '国标法', 'modal': '多模态', 'probit': '正态概率',
-               'stage': '逐级'}.get(res['method'], res['method'])
+        mn = {'std': '国标法', 'modal': '多模态', 'probit': '正态概率',
+              'stage': '逐级'}.get(res['method'], res['method'])
         comps = ','.join(sorted({r['compound'] for r in res['detail_rows']}))
-        nucs  = ','.join(sorted({r['nuclide']  for r in res['detail_rows']}))
+        nucs = ','.join(sorted({r['nuclide'] for r in res['detail_rows']}))
         amad_s = str(res['fit_res'].get('amad', '逐级'))
-        pf_s   = f"{res['mask_pf_overall']:.4f}"
+        pf_s = f"{res['mask_pf_overall']:.4f}"
         r = self.accum_table.rowCount()
         self.accum_table.insertRow(r)
         for c, v in enumerate([mn, f"{comps}/{nucs}", amad_s, pf_s, f"{res['total_dose']:.4e}"]):
@@ -1681,7 +1781,7 @@ class DoseCalcApp(QMainWindow):
         """构建包含所有计算信息的字典，供各导出格式共用"""
         res = self._fit_result
         fit = res['fit_res']
-        q   = fit.get('quality', {})
+        q = fit.get('quality', {})
 
         # ─ 输入参数 ─
         raw_concs = res['raw_concs']
@@ -1756,7 +1856,8 @@ class DoseCalcApp(QMainWindow):
             from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
             from openpyxl.utils import get_column_letter
         except ImportError:
-            QMessageBox.critical(self, "缺少依赖", "请安装 openpyxl: pip install openpyxl")
+            QMessageBox.critical(
+                self, "缺少依赖", "请安装 openpyxl: pip install openpyxl")
             return
 
         data = self._build_export_data()
@@ -1765,20 +1866,23 @@ class DoseCalcApp(QMainWindow):
         thin_border = Border(
             left=Side(style='thin'), right=Side(style='thin'),
             top=Side(style='thin'), bottom=Side(style='thin'))
-        header_fill = PatternFill(start_color='1A5276', end_color='1A5276', fill_type='solid')
+        header_fill = PatternFill(
+            start_color='1A5276', end_color='1A5276', fill_type='solid')
         header_font = Font(name='微软雅黑', bold=True, color='FFFFFF', size=11)
-        title_font  = Font(name='微软雅黑', bold=True, size=14, color='1A5276')
-        cell_font   = Font(name='Consolas', size=10)
-        warn_font   = Font(name='微软雅黑', bold=True, size=11, color='C0392B')
+        title_font = Font(name='微软雅黑', bold=True, size=14, color='1A5276')
+        cell_font = Font(name='Consolas', size=10)
+        warn_font = Font(name='微软雅黑', bold=True, size=11, color='C0392B')
 
         def write_table(ws, headers, rows, start_row=1, col_widths=None):
             for ci, h in enumerate(headers, 1):
                 c = ws.cell(row=start_row, column=ci, value=h)
-                c.font, c.fill, c.alignment, c.border = header_font, header_fill, Alignment(horizontal='center'), thin_border
+                c.font, c.fill, c.alignment, c.border = header_font, header_fill, Alignment(
+                    horizontal='center'), thin_border
             for ri, row in enumerate(rows):
                 for ci, val in enumerate(row.values() if isinstance(row, dict) else row, 1):
                     c = ws.cell(row=start_row + 1 + ri, column=ci, value=val)
-                    c.font, c.alignment, c.border = cell_font, Alignment(horizontal='center'), thin_border
+                    c.font, c.alignment, c.border = cell_font, Alignment(
+                        horizontal='center'), thin_border
             if col_widths:
                 for ci, w in enumerate(col_widths, 1):
                     ws.column_dimensions[get_column_letter(ci)].width = w
@@ -1788,9 +1892,11 @@ class DoseCalcApp(QMainWindow):
         ws1.title = "汇总"
         ws1.cell(row=1, column=1, value="空气采样法内照射剂量计算报告").font = title_font
         ws1.merge_cells('A1:B1')
-        ws1.cell(row=2, column=1, value=f"生成时间: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}").font = Font(name='微软雅黑', size=10, color='666666')
+        ws1.cell(row=2, column=1, value=f"生成时间: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}").font = Font(
+            name='微软雅黑', size=10, color='666666')
         for ri, (k, v) in enumerate(data['summary'].items(), 4):
-            ws1.cell(row=ri, column=1, value=k).font = Font(name='微软雅黑', bold=True, size=10)
+            ws1.cell(row=ri, column=1, value=k).font = Font(
+                name='微软雅黑', bold=True, size=10)
             ws1.cell(row=ri, column=2, value=v).font = cell_font
             if k == '数据质量' and 'poor' in str(v).lower():
                 ws1.cell(row=ri, column=2).font = warn_font
@@ -1806,11 +1912,13 @@ class DoseCalcApp(QMainWindow):
         # ── Sheet 3: 剂量明细 ──
         ws3 = wb.create_sheet("剂量明细")
         ws3.cell(row=1, column=1, value="逐核素剂量明细").font = title_font
-        dose_headers = ['化合物', '气溶胶类型', '核素', 'AMAD/粒径', 'e (Sv/Bq)', '活度贡献 (Bq/m³)', '剂量 (Sv)']
+        dose_headers = ['化合物', '气溶胶类型', '核素', 'AMAD/粒径',
+                        'e (Sv/Bq)', '活度贡献 (Bq/m³)', '剂量 (Sv)']
         dose_rows = [[
             r['compound'], r['aerosol_type'], r['nuclide'],
             str(r['amad']),
-            f"{r['e_val']:.3e}" if not np.isnan(r.get('e_val', np.nan)) else "逐级",
+            f"{r['e_val']:.3e}" if not np.isnan(
+                r.get('e_val', np.nan)) else "逐级",
             f"{r['act_conc']:.4e}", f"{r['dose']:.4e}",
         ] for r in data['dose_rows']]
         write_table(ws3, dose_headers, dose_rows, start_row=3,
@@ -1827,12 +1935,14 @@ class DoseCalcApp(QMainWindow):
         ws5 = wb.create_sheet("计算日志")
         ws5.cell(row=1, column=1, value="计算详细日志").font = title_font
         for ri, line in enumerate(data['log'].split('\n'), 3):
-            ws5.cell(row=ri, column=1, value=line).font = Font(name='Consolas', size=10)
+            ws5.cell(row=ri, column=1, value=line).font = Font(
+                name='Consolas', size=10)
         ws5.column_dimensions['A'].width = 100
 
         wb.save(path)
         QMessageBox.information(self, "导出成功", f"Excel 报告已保存至：\n{path}")
-        self.status_bar.showMessage(f"✓ 已导出 Excel → {os.path.basename(path)}", 5000)
+        self.status_bar.showMessage(
+            f"✓ 已导出 Excel → {os.path.basename(path)}", 5000)
 
     def _export_csv(self):
         if not self._check_result():
@@ -1843,12 +1953,14 @@ class DoseCalcApp(QMainWindow):
             return
         try:
             data = self._build_export_data()
-            rows = [['化合物', '气溶胶类型', '核素', 'AMAD/粒径', 'e (Sv/Bq)', '活度贡献 (Bq/m³)', '剂量 (Sv)']]
+            rows = [['化合物', '气溶胶类型', '核素', 'AMAD/粒径',
+                     'e (Sv/Bq)', '活度贡献 (Bq/m³)', '剂量 (Sv)']]
             for r in data['dose_rows']:
                 rows.append([
                     r['compound'], r['aerosol_type'], r['nuclide'],
                     str(r['amad']),
-                    f"{r['e_val']:.3e}" if not np.isnan(r.get('e_val', np.nan)) else "逐级",
+                    f"{r['e_val']:.3e}" if not np.isnan(
+                        r.get('e_val', np.nan)) else "逐级",
                     f"{r['act_conc']:.4e}", f"{r['dose']:.4e}",
                 ])
             # 追加汇总行
@@ -1860,7 +1972,8 @@ class DoseCalcApp(QMainWindow):
                 writer = csv.writer(f)
                 writer.writerows(rows)
             QMessageBox.information(self, "导出成功", f"CSV 已保存至：\n{path}")
-            self.status_bar.showMessage(f"✓ 已导出 CSV → {os.path.basename(path)}", 5000)
+            self.status_bar.showMessage(
+                f"✓ 已导出 CSV → {os.path.basename(path)}", 5000)
         except Exception as e:
             QMessageBox.warning(self, "导出失败", f"导出 CSV 时出错：{e}")
 
@@ -1876,14 +1989,16 @@ class DoseCalcApp(QMainWindow):
             with open(path, 'w', encoding='utf-8') as f:
                 f.write("=" * 60 + "\n")
                 f.write("  空气采样法内照射剂量计算系统 v3.1 — 计算日志\n")
-                f.write(f"  生成时间: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(
+                    f"  生成时间: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write("=" * 60 + "\n\n")
                 f.write("[ 汇总参数 ]\n")
                 for k, v in data['summary'].items():
                     f.write(f"  {k}: {v}\n")
                 f.write("\n[ 拟合参数 ]\n")
                 for ft in data['fitting']:
-                    f.write("  " + " | ".join(f"{k}={v}" for k, v in ft.items()) + "\n")
+                    f.write(
+                        "  " + " | ".join(f"{k}={v}" for k, v in ft.items()) + "\n")
                 f.write("\n" + "-" * 60 + "\n")
                 f.write("[ 详细计算日志 ]\n\n")
                 f.write(data['log'])
@@ -1891,7 +2006,8 @@ class DoseCalcApp(QMainWindow):
                 f.write("  报告结束\n")
                 f.write("=" * 60 + "\n")
             QMessageBox.information(self, "导出成功", f"日志已保存至：\n{path}")
-            self.status_bar.showMessage(f"✓ 已导出日志 → {os.path.basename(path)}", 5000)
+            self.status_bar.showMessage(
+                f"✓ 已导出日志 → {os.path.basename(path)}", 5000)
         except Exception as e:
             QMessageBox.warning(self, "导出失败", f"导出日志时出错：{e}")
 
@@ -1944,30 +2060,36 @@ class DoseCalcApp(QMainWindow):
         wb = Workbook()
         thin_border = Border(left=Side(style='thin'), right=Side(style='thin'),
                              top=Side(style='thin'), bottom=Side(style='thin'))
-        header_fill = PatternFill(start_color='1A5276', end_color='1A5276', fill_type='solid')
+        header_fill = PatternFill(
+            start_color='1A5276', end_color='1A5276', fill_type='solid')
         header_font = Font(name='微软雅黑', bold=True, color='FFFFFF', size=11)
-        title_font  = Font(name='微软雅黑', bold=True, size=14, color='1A5276')
-        cell_font   = Font(name='Consolas', size=10)
+        title_font = Font(name='微软雅黑', bold=True, size=14, color='1A5276')
+        cell_font = Font(name='Consolas', size=10)
 
         def write_table(ws, headers, rows, start_row=1, col_widths=None):
             for ci, h in enumerate(headers, 1):
                 c = ws.cell(row=start_row, column=ci, value=h)
-                c.font, c.fill, c.alignment, c.border = header_font, header_fill, Alignment(horizontal='center'), thin_border
+                c.font, c.fill, c.alignment, c.border = header_font, header_fill, Alignment(
+                    horizontal='center'), thin_border
             for ri, row in enumerate(rows):
                 for ci, val in enumerate(row.values() if isinstance(row, dict) else row, 1):
                     c = ws.cell(row=start_row + 1 + ri, column=ci, value=val)
-                    c.font, c.alignment, c.border = cell_font, Alignment(horizontal='center'), thin_border
+                    c.font, c.alignment, c.border = cell_font, Alignment(
+                        horizontal='center'), thin_border
             if col_widths:
                 for ci, w in enumerate(col_widths, 1):
                     ws.column_dimensions[get_column_letter(ci)].width = w
 
-        ws1 = wb.active; ws1.title = "汇总"
+        ws1 = wb.active
+        ws1.title = "汇总"
         ws1.cell(row=1, column=1, value="空气采样法内照射剂量计算报告").font = title_font
         ws1.merge_cells('A1:B1')
         for ri, (k, v) in enumerate(data['summary'].items(), 4):
-            ws1.cell(row=ri, column=1, value=k).font = Font(name='微软雅黑', bold=True, size=10)
+            ws1.cell(row=ri, column=1, value=k).font = Font(
+                name='微软雅黑', bold=True, size=10)
             ws1.cell(row=ri, column=2, value=v).font = cell_font
-        ws1.column_dimensions['A'].width = 24; ws1.column_dimensions['B'].width = 32
+        ws1.column_dimensions['A'].width = 24
+        ws1.column_dimensions['B'].width = 32
 
         ws2 = wb.create_sheet("拟合参数")
         ws2.cell(row=1, column=1, value="拟合参数与信息准则").font = title_font
@@ -1975,30 +2097,36 @@ class DoseCalcApp(QMainWindow):
                     col_widths=[18, 16, 14, 12, 12, 12])
 
         ws3 = wb.create_sheet("剂量明细")
-        dose_headers = ['化合物', '气溶胶类型', '核素', 'AMAD/粒径', 'e (Sv/Bq)', '活度贡献 (Bq/m³)', '剂量 (Sv)']
+        dose_headers = ['化合物', '气溶胶类型', '核素', 'AMAD/粒径',
+                        'e (Sv/Bq)', '活度贡献 (Bq/m³)', '剂量 (Sv)']
         dose_rows = [[r['compound'], r['aerosol_type'], r['nuclide'], str(r['amad']),
-                      f"{r['e_val']:.3e}" if not np.isnan(r.get('e_val', np.nan)) else "逐级",
+                      f"{r['e_val']:.3e}" if not np.isnan(
+                          r.get('e_val', np.nan)) else "逐级",
                       f"{r['act_conc']:.4e}", f"{r['dose']:.4e}"] for r in data['dose_rows']]
         write_table(ws3, dose_headers, dose_rows, start_row=3,
                     col_widths=[14, 22, 12, 20, 14, 20, 16])
 
         ws4 = wb.create_sheet("输入数据")
         in_headers = list(data['input'][0].keys())
-        write_table(ws4, in_headers, data['input'], start_row=3, col_widths=[10, 18, 22, 22])
+        write_table(ws4, in_headers, data['input'],
+                    start_row=3, col_widths=[10, 18, 22, 22])
 
         ws5 = wb.create_sheet("计算日志")
         for ri, line in enumerate(data['log'].split('\n'), 3):
-            ws5.cell(row=ri, column=1, value=line).font = Font(name='Consolas', size=10)
+            ws5.cell(row=ri, column=1, value=line).font = Font(
+                name='Consolas', size=10)
         ws5.column_dimensions['A'].width = 100
         wb.save(path)
 
     def _do_export_csv(self, path):
         import csv
         data = self._build_export_data()
-        rows = [['化合物', '气溶胶类型', '核素', 'AMAD/粒径', 'e (Sv/Bq)', '活度贡献 (Bq/m³)', '剂量 (Sv)']]
+        rows = [['化合物', '气溶胶类型', '核素', 'AMAD/粒径',
+                 'e (Sv/Bq)', '活度贡献 (Bq/m³)', '剂量 (Sv)']]
         for r in data['dose_rows']:
             rows.append([r['compound'], r['aerosol_type'], r['nuclide'], str(r['amad']),
-                         f"{r['e_val']:.3e}" if not np.isnan(r.get('e_val', np.nan)) else "逐级",
+                         f"{r['e_val']:.3e}" if not np.isnan(
+                             r.get('e_val', np.nan)) else "逐级",
                          f"{r['act_conc']:.4e}", f"{r['dose']:.4e}"])
         rows.append([])
         for k, v in data['summary'].items():
@@ -2011,14 +2139,16 @@ class DoseCalcApp(QMainWindow):
         with open(path, 'w', encoding='utf-8') as f:
             f.write("=" * 60 + "\n")
             f.write("  空气采样法内照射剂量计算系统 v3.1 — 计算日志\n")
-            f.write(f"  生成时间: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(
+                f"  生成时间: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write("=" * 60 + "\n\n")
             f.write("[ 汇总参数 ]\n")
             for k, v in data['summary'].items():
                 f.write(f"  {k}: {v}\n")
             f.write("\n[ 拟合参数 ]\n")
             for ft in data['fitting']:
-                f.write("  " + " | ".join(f"{k}={v}" for k, v in ft.items()) + "\n")
+                f.write(
+                    "  " + " | ".join(f"{k}={v}" for k, v in ft.items()) + "\n")
             f.write("\n" + "-" * 60 + "\n")
             f.write("[ 详细计算日志 ]\n\n")
             f.write(data['log'])
