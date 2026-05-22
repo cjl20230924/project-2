@@ -116,7 +116,51 @@ def scan_nuclides():
             print(f"[警告] 加载文件 {f.name} 失败: {e}")
 
 
+def _normalize_nuclide(name):
+    """归一化核素名：下划线→连字符，去空格"""
+    return name.strip().replace('_', '-')
+
+# ─ 化合物短名 → (parquet 全名, 对应气溶胶类型) ─
+# aerosol_type 与 parquet 中实际绑定的类型完全一致，不得随意修改
+_COMPOUND_SHORT_TO_FULL = {
+    # Uranium – ICRP 68/72
+    'UO2':         ('Uranium octoxide, uranium dioxide',                                       'Intermediate Type M/S'),
+    'U3O8':        ('Uranium octoxide, uranium dioxide',                                       'Intermediate Type M/S'),
+    'UO3':         ('Uranyl nitrate, uranium peroxide hydrate, ammonium diuranate, uranium trioxide', 'Intermediate Type F/M'),
+    '硝酸铀酰':    ('Uranyl nitrate, uranium peroxide hydrate, ammonium diuranate, uranium trioxide', 'Intermediate Type F/M'),
+    'UNH':         ('Uranyl nitrate, uranium peroxide hydrate, ammonium diuranate, uranium trioxide', 'Intermediate Type F/M'),
+    'ADU':         ('Uranyl nitrate, uranium peroxide hydrate, ammonium diuranate, uranium trioxide', 'Intermediate Type F/M'),
+    'UF6':         ('Uranium hexafluoride, uranyl tributyl-phosphate',                         'Type F'),
+    'U_metal':     ('Uranyl acetylacetonate; depleted uranium aerosols from use of kinetic energy penetrators; vaporised uranium metal; all unspecified forms', 'Type M'),
+    '铀金属蒸气':  ('Uranyl acetylacetonate; depleted uranium aerosols from use of kinetic energy penetrators; vaporised uranium metal; all unspecified forms', 'Type M'),
+    'DU':          ('Uranyl acetylacetonate; depleted uranium aerosols from use of kinetic energy penetrators; vaporised uranium metal; all unspecified forms', 'Type M'),
+    'U aluminide': ('Uranium aluminide',                                                       'Aerosols Uranium aluminide'),
+    # Plutonium – ICRP 68/72
+    'PuO2':        ('Plutonium-239 dioxide, plutonium in mixed oxide',                         'Unspecified'),
+    'MOX':         ('Plutonium-239 dioxide, plutonium in mixed oxide',                         'Unspecified'),
+    'Pu_nitrate':  ('Plutonium nitrate',                                                       'Unspecified'),
+    '硝酸钚':      ('Plutonium nitrate',                                                       'Unspecified'),
+    'Pu_citrate':  ('Plutonium citrate, plutonium tri-butyl-phosphate, plutonium chloride',    'Type M'),
+    # Hydrogen / Tritium – ICRP 68
+    'HTO':         ('Gas or vapour Type V, Tritiated water',                                   'Unspecified'),
+    '氚化水':      ('Gas or vapour Type V, Tritiated water',                                   'Unspecified'),
+    'HT':          ('Gas or vapour Type V, Tritium gas',                                       'Unspecified'),
+    '氚气':        ('Gas or vapour Type V, Tritium gas',                                       'Unspecified'),
+    'OBT':         ('Biogenic organic compounds',                                              'Unspecified'),
+    '有机氚':      ('Biogenic organic compounds',                                              'Unspecified'),
+}
+
+
+def resolve_compound(short_name):
+    """返回 (parquet 全名, 对应气溶胶类型)；未知短名则返回 (原值, None)"""
+    r = _COMPOUND_SHORT_TO_FULL.get(short_name.strip())
+    if r:
+        return r  # (full_name, aerosol_type)
+    return (short_name.strip(), None)
+
+
 def get_nuclide_df(nuclide, inhalation_only=True):
+    nuclide = _normalize_nuclide(nuclide)
     key = (nuclide, inhalation_only)
     if key in _nuclide_cache:
         return _nuclide_cache[key]
@@ -213,8 +257,18 @@ class PlotCanvas(FigureCanvas):
 
     def plot_fitting(self, raw_activities, corrected, amad_uni, gsd_uni, total_uni,
                      amad1, gsd1, frac1, amad2, gsd2, total_bi, total_corr,
-                     D50_lin, GSD_lin, R2_lin):
+                     D50_lin, GSD_lin, R2_lin, is_corrected=False):
+        """
+        绘制粒径分布拟合图
+        Parameters
+        ----------
+        is_corrected : bool
+            True  → corrected 数据已经过口罩防护校正（防护后）
+            False → corrected 为效率校正后但未加口罩防护校正（防护前）
+        """
         self.fig.clear()
+        data_label = "防护后校正浓度" if is_corrected else "防护前浓度（效率校正）"
+        plot_note  = "（图中散点 = 口罩防护校正后数据）" if is_corrected else "（图中散点 = 防护前数据，效率校正）"
 
         x_plot = np.logspace(np.log10(0.1), np.log10(50), 300)
         stage_widths = np.log(stages_high / stages_low)
@@ -226,13 +280,18 @@ class PlotCanvas(FigureCanvas):
         # ── 2×2 布局 ──
         axes = self.fig.subplots(2, 2)
 
+        # 标注防护状态的颜色
+        scatter_color = '#e74c3c' if is_corrected else '#3498db'
+        scatter_label = f'实测数据 {plot_note}'
+
         # ── 左上：单峰拟合 ──
         ax = axes[0, 0]
         ax.semilogx(x_plot, y_uni, 'b-', lw=2, label=f'单峰 AMAD={amad_uni:.2f} $\mu m$')
-        ax.scatter(midpoints, data_density, c='red', s=50, edgecolors='k', zorder=5)
+        ax.scatter(midpoints, data_density, c=scatter_color, s=50, edgecolors='k', zorder=5,
+                   label=data_label)
         ax.set_xlabel('空气动力学粒径 ($\mu m$)', fontsize=9)
         ax.set_ylabel('归一化密度', fontsize=9)
-        ax.set_title('单峰对数正态拟合', fontsize=10)
+        ax.set_title(f'单峰对数正态拟合  [{data_label}]', fontsize=9)
         ax.grid(ls='--', alpha=0.5)
         ax.set_xlim(0.1, 50)
         ax.set_ylim(bottom=0)
@@ -249,9 +308,10 @@ class PlotCanvas(FigureCanvas):
             ax.semilogx(x_plot, y_fine, 'r--', lw=1.5, label=f'细峰 {amad2:.1f} $\mu m$')
         else:
             ax.semilogx(x_plot, y_uni, 'k--', lw=2, label='未检测到双峰')
-        ax.scatter(midpoints, data_density, c='red', s=50, edgecolors='k', zorder=5)
+        ax.scatter(midpoints, data_density, c=scatter_color, s=50, edgecolors='k', zorder=5,
+                   label=data_label)
         ax.set_xlabel('空气动力学粒径 ($\mu m$)', fontsize=9)
-        ax.set_title('双峰对数正态拟合', fontsize=10)
+        ax.set_title(f'双峰对数正态拟合  [{data_label}]', fontsize=9)
         ax.grid(ls='--', alpha=0.5)
         ax.set_xlim(0.1, 50)
         ax.set_ylim(bottom=0)
@@ -324,7 +384,7 @@ class PlotCanvas(FigureCanvas):
                         bbox=dict(boxstyle='round', fc='wheat', alpha=0.7))
         ax.set_xlabel('空气动力学粒径 ($\mu m$)', fontsize=9)
         ax.set_ylabel('累积活度比例 (%)', fontsize=9)
-        ax.set_title('正态概率图（ICRP方法）', fontsize=10)
+        ax.set_title(f'正态概率图（ICRP方法）  [{data_label}]', fontsize=9)
         ax.grid(True, which='both', ls='--', alpha=0.5)
         ax.legend(fontsize=6.5, loc='lower right')
 
@@ -333,6 +393,7 @@ class PlotCanvas(FigureCanvas):
         ax.axis('off')
         lines = []
         lines.append('══════ 拟合参数摘要 ══════')
+        lines.append(f'数据类型: {data_label}')
         lines.append('')
         lines.append('【单峰对数正态】')
         lines.append(f'  $AMAD$ = {amad_uni:.3f} $\\mu$m')
@@ -366,9 +427,13 @@ class PlotCanvas(FigureCanvas):
         self.draw()
 
 
-# ==================== 核素化合物配置组件（垂直两行式） ====================
+# ==================== 核素化合物配置组件（垂直三行式） ====================
 class NuclideCompoundWidget(QFrame):
-    """每个化合物配置为一个卡片（两行布局，宽度友好）"""
+    """每个化合物配置为一个卡片（三行布局）
+    行1: 化合物输入 | 活度占比 | 删除
+    行2: 气溶胶类型（自动推断提示 + 手动覆盖下拉）
+    行3: 核素丰度
+    """
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFrameShape(QFrame.StyledPanel)
@@ -377,20 +442,15 @@ class NuclideCompoundWidget(QFrame):
         outer.setContentsMargins(6, 4, 6, 4)
         outer.setSpacing(3)
 
-        # 第一行：化合物 | 气溶胶类型 | 活度占比 | 删除按钮
+        # ── 第一行：化合物 | 活度占比 | 删除按钮 ──
         row1 = QHBoxLayout()
         row1.setSpacing(6)
 
         lbl_comp = QLabel("化合物:")
         lbl_comp.setFixedWidth(52)
         self.compound_edit = QLineEdit("UO2")
-        self.compound_edit.setPlaceholderText("如 UO2, U3O8")
-        self.compound_edit.setMinimumWidth(70)
-
-        lbl_at = QLabel("气溶胶:")
-        lbl_at.setFixedWidth(50)
-        self.aerosol_combo = QComboBox()
-        self.aerosol_combo.setMinimumWidth(100)
+        self.compound_edit.setPlaceholderText("如 UO2, U3O8, UO3, UF6…")
+        self.compound_edit.setMinimumWidth(80)
 
         lbl_frac = QLabel("活度占比:")
         lbl_frac.setFixedWidth(62)
@@ -406,24 +466,70 @@ class NuclideCompoundWidget(QFrame):
         self.del_btn.setStyleSheet("color:red; font-weight:bold; border:none;")
 
         row1.addWidget(lbl_comp)
-        row1.addWidget(self.compound_edit, 2)
-        row1.addWidget(lbl_at)
-        row1.addWidget(self.aerosol_combo, 3)
+        row1.addWidget(self.compound_edit, 3)
         row1.addWidget(lbl_frac)
         row1.addWidget(self.act_frac_spin, 2)
         row1.addWidget(self.del_btn)
         outer.addLayout(row1)
 
-        # 第二行：核素丰度
+        # ── 第二行：气溶胶类型（自动推断标签 + 手动覆盖下拉） ──
         row2 = QHBoxLayout()
         row2.setSpacing(6)
+        lbl_at = QLabel("气溶胶类型:")
+        lbl_at.setFixedWidth(68)
+
+        # 自动推断提示：根据化合物名自动更新
+        self.aerosol_inferred_lbl = QLabel("（自动推断: —）")
+        self.aerosol_inferred_lbl.setStyleSheet(
+            "color:#1e8449; font-size:10px; font-style:italic;")
+        self.aerosol_inferred_lbl.setMinimumWidth(180)
+
+        lbl_override = QLabel("手动覆盖:")
+        lbl_override.setFixedWidth(58)
+        lbl_override.setStyleSheet("color:#888; font-size:10px;")
+        self.aerosol_combo = QComboBox()
+        self.aerosol_combo.setMinimumWidth(130)
+        self.aerosol_combo.setToolTip(
+            "默认由化合物名自动推断气溶胶类型。\n"
+            "若需手动覆盖，请在此选择。\n"
+            "已知映射：UO2/U3O8→Intermediate Type M/S，\n"
+            "UO3/UNH/ADU→Intermediate Type F/M，UF6→Type F"
+        )
+
+        row2.addWidget(lbl_at)
+        row2.addWidget(self.aerosol_inferred_lbl, 2)
+        row2.addWidget(lbl_override)
+        row2.addWidget(self.aerosol_combo, 2)
+        outer.addLayout(row2)
+
+        # ── 第三行：核素丰度 ──
+        row3 = QHBoxLayout()
+        row3.setSpacing(6)
         lbl_nuc = QLabel("核素丰度:")
         lbl_nuc.setFixedWidth(62)
         self.nuclides_edit = QLineEdit("U_238:0.993|U_235:0.007")
         self.nuclides_edit.setPlaceholderText("格式：核素:比例|核素:比例  例如 U_238:0.993|U_235:0.007")
-        row2.addWidget(lbl_nuc)
-        row2.addWidget(self.nuclides_edit, 1)
-        outer.addLayout(row2)
+        row3.addWidget(lbl_nuc)
+        row3.addWidget(self.nuclides_edit, 1)
+        outer.addLayout(row3)
+
+        # 化合物名变化时自动更新推断标签
+        self.compound_edit.textChanged.connect(self._update_inferred_label)
+        self._update_inferred_label(self.compound_edit.text())
+
+    def _update_inferred_label(self, text):
+        """根据化合物短名更新推断气溶胶类型标签"""
+        name = text.strip()
+        result = _COMPOUND_SHORT_TO_FULL.get(name)
+        if result:
+            _, aerosol = result
+            self.aerosol_inferred_lbl.setText(f"✔ 自动推断: {aerosol}")
+            self.aerosol_inferred_lbl.setStyleSheet(
+                "color:#1e8449; font-size:10px; font-style:italic;")
+        else:
+            self.aerosol_inferred_lbl.setText("⚠ 未知化合物，将使用手动覆盖值")
+            self.aerosol_inferred_lbl.setStyleSheet(
+                "color:#c0392b; font-size:10px; font-style:italic;")
 
     def get_data(self):
         nuclide_str = self.nuclides_edit.text().strip()
@@ -436,9 +542,13 @@ class NuclideCompoundWidget(QFrame):
                     nuclides[n.strip()] = float(v.strip())
                 except Exception:
                     pass
+        compound = self.compound_edit.text().strip()
+        # 优先使用自动推断；若化合物不在映射表则使用 combo 手动选择值
+        result = _COMPOUND_SHORT_TO_FULL.get(compound)
+        aerosol_type = result[1] if result else self.aerosol_combo.currentText()
         return {
-            'compound':          self.compound_edit.text().strip(),
-            'aerosol_type':      self.aerosol_combo.currentText(),
+            'compound':          compound,
+            'aerosol_type':      aerosol_type,
             'activity_fraction': self.act_frac_spin.value(),
             'nuclides':          nuclides,
         }
@@ -596,8 +706,58 @@ class DoseCalcApp(QMainWindow):
         self.rb_file.toggled.connect(self._on_input_mode_changed)
         left_lay.addWidget(grp1)
 
-        # ─ § 2. 计算方法 ─
-        grp2 = QGroupBox("② 计算方法选择")
+        # ─ § 2. 防护 & 呼吸参数 ─
+        grp4 = QGroupBox("② 防护 & 呼吸参数")
+        grp4.setFont(QFont("微软雅黑", 10, QFont.Bold))
+        g4 = QGridLayout(grp4)
+        g4.setSpacing(6)
+        g4.setColumnStretch(1, 1)
+        g4.setColumnStretch(3, 1)
+
+        g4.addWidget(QLabel("口罩型号:"), 0, 0)
+        self.mask_combo = QComboBox()
+        self.mask_combo.addItems(list(MASK_PARAMS.keys()))
+        g4.addWidget(self.mask_combo, 0, 1)
+        self.mask_info_lbl = QLabel("")
+        self.mask_info_lbl.setStyleSheet("color:#555; font-size:10px;")
+        g4.addWidget(self.mask_info_lbl, 0, 2, 1, 2)
+        self.mask_combo.currentTextChanged.connect(self._update_mask_info)
+
+        g4.addWidget(QLabel("呼吸速率 BR (m³/h):"), 1, 0)
+        self.br_spin = QDoubleSpinBox()
+        self.br_spin.setRange(0.1, 5.0); self.br_spin.setValue(1.2)
+        self.br_spin.setSingleStep(0.1); self.br_spin.setDecimals(2)
+        g4.addWidget(self.br_spin, 1, 1)
+
+        g4.addWidget(QLabel("工作时长 T (h):"), 1, 2)
+        self.work_spin = QDoubleSpinBox()
+        self.work_spin.setRange(0.5, 24.0); self.work_spin.setValue(8.0)
+        self.work_spin.setSingleStep(0.5); self.work_spin.setDecimals(1)
+        g4.addWidget(self.work_spin, 1, 3)
+
+        self._update_mask_info()
+        left_lay.addWidget(grp4)
+
+        # ─ 运行拟合按钮（在防护参数下方，计算方法选择上方）─
+        fit_btn_row = QHBoxLayout()
+        fit_btn_row.addStretch()
+        self.fit_btn = QPushButton("🔍  运行拟合（查看粒径分布图）")
+        self.fit_btn.setMinimumHeight(36)
+        self.fit_btn.setFont(QFont("微软雅黑", 11, QFont.Bold))
+        self.fit_btn.setStyleSheet(
+            "QPushButton { background:#27ae60; color:white; border-radius:5px; padding:4px 20px; }"
+            "QPushButton:hover { background:#2ecc71; }"
+            "QPushButton:disabled { background:#aaa; }"
+        )
+        self.fit_btn.clicked.connect(self._on_fit)
+        fit_btn_row.addWidget(self.fit_btn)
+        fit_btn_hint = QLabel("  ↳ 先运行拟合可在右侧查看粒径分布图，再选择计算方法开始计算")
+        fit_btn_hint.setStyleSheet("color:#888; font-size:10px;")
+        left_lay.addLayout(fit_btn_row)
+        left_lay.addWidget(fit_btn_hint)
+
+        # ─ § 3. 计算方法 ─
+        grp2 = QGroupBox("③ 计算方法选择")
         grp2.setFont(QFont("微软雅黑", 10, QFont.Bold))
         g2 = QVBoxLayout(grp2)
         g2.setSpacing(3)
@@ -625,29 +785,55 @@ class DoseCalcApp(QMainWindow):
             self._hint_lbls[rb] = hl
             rb.toggled.connect(self._update_method_hints)
         self._update_method_hints()
-
-        # 拟合按钮（选完数据后手动点击触发）
-        fit_btn_row = QHBoxLayout()
-        fit_btn_row.addStretch()
-        self.fit_btn = QPushButton("🔍  运行拟合")
-        self.fit_btn.setMinimumHeight(36)
-        self.fit_btn.setFont(QFont("微软雅黑", 11, QFont.Bold))
-        self.fit_btn.setStyleSheet(
-            "QPushButton { background:#27ae60; color:white; border-radius:5px; padding:4px 20px; }"
-            "QPushButton:hover { background:#2ecc71; }"
-            "QPushButton:disabled { background:#aaa; }"
-        )
-        self.fit_btn.clicked.connect(self._on_fit)
-        fit_btn_row.addWidget(self.fit_btn)
-        g2.addLayout(fit_btn_row)
-
         left_lay.addWidget(grp2)
 
-        # ─ § 3. 核素 / 化合物配置 ─
-        grp3 = QGroupBox("③ 核素 / 化合物配置")
+        # ─ § 4. 核素 / 化合物配置 ─
+        grp3 = QGroupBox("④ 核素 / 化合物配置")
         grp3.setFont(QFont("微软雅黑", 10, QFont.Bold))
         g3 = QVBoxLayout(grp3)
         g3.setSpacing(4)
+
+        # 模式切换提示
+        nuc_mode_row = QHBoxLayout()
+        nuc_mode_lbl = QLabel("配置模式：")
+        nuc_mode_lbl.setStyleSheet("font-weight:bold; color:#1a5276;")
+        self.rb_nuc_auto   = QRadioButton("自动从采样数据读取")
+        self.rb_nuc_manual = QRadioButton("手动输入")
+        self.rb_nuc_manual.setChecked(True)
+        bg_nuc = QButtonGroup(self)
+        bg_nuc.addButton(self.rb_nuc_auto)
+        bg_nuc.addButton(self.rb_nuc_manual)
+        self.rb_nuc_auto.toggled.connect(self._on_nuc_mode_changed)
+        self.rb_nuc_manual.toggled.connect(self._on_nuc_mode_changed)
+        nuc_mode_row.addWidget(nuc_mode_lbl)
+        nuc_mode_row.addWidget(self.rb_nuc_auto)
+        nuc_mode_row.addWidget(self.rb_nuc_manual)
+        nuc_mode_row.addStretch()
+        g3.addLayout(nuc_mode_row)
+
+        # 自动模式提示标签
+        self.nuc_auto_hint = QLabel(
+            '  \u2714 已选择【自动】模式：切换左侧【车间/采样ID】后，化合物配置将自动填入。\n'
+            '  若采样数据中无化合物信息，仍可在下方手动编辑。'
+        )
+        self.nuc_auto_hint.setStyleSheet(
+            "background:#eafaf1; border:1px solid #a9dfbf; border-radius:4px; "
+            "color:#1e8449; font-size:10px; padding:4px; margin:2px 0;")
+        self.nuc_auto_hint.setWordWrap(True)
+        self.nuc_auto_hint.setVisible(False)
+        g3.addWidget(self.nuc_auto_hint)
+
+        # 手动模式提示标签
+        self.nuc_manual_hint = QLabel(
+            '  \u270f 手动模式：请在下方直接填写化合物名称、核素丰度等参数。\n'
+            '  气溶胶类型会根据化合物名自动推断（详见 _COMPOUND_SHORT_TO_FULL 映射表）。'
+        )
+        self.nuc_manual_hint.setStyleSheet(
+            "background:#eaf2ff; border:1px solid #aac4e0; border-radius:4px; "
+            "color:#1a5276; font-size:10px; padding:4px; margin:2px 0;")
+        self.nuc_manual_hint.setWordWrap(True)
+        self.nuc_manual_hint.setVisible(True)
+        g3.addWidget(self.nuc_manual_hint)
 
         nuc_row = QHBoxLayout()
         nuc_row.addWidget(QLabel("元素:"))
@@ -678,38 +864,6 @@ class DoseCalcApp(QMainWindow):
         self._compound_widgets = []
         self._add_compound_row()
         left_lay.addWidget(grp3)
-
-        # ─ § 4. 防护 & 呼吸参数 ─
-        grp4 = QGroupBox("④ 防护 & 呼吸参数")
-        grp4.setFont(QFont("微软雅黑", 10, QFont.Bold))
-        g4 = QGridLayout(grp4)
-        g4.setSpacing(6)
-        g4.setColumnStretch(1, 1)
-        g4.setColumnStretch(3, 1)
-
-        g4.addWidget(QLabel("口罩型号:"), 0, 0)
-        self.mask_combo = QComboBox()
-        self.mask_combo.addItems(list(MASK_PARAMS.keys()))
-        g4.addWidget(self.mask_combo, 0, 1)
-        self.mask_info_lbl = QLabel("")
-        self.mask_info_lbl.setStyleSheet("color:#555; font-size:10px;")
-        g4.addWidget(self.mask_info_lbl, 0, 2, 1, 2)
-        self.mask_combo.currentTextChanged.connect(self._update_mask_info)
-
-        g4.addWidget(QLabel("呼吸速率 BR (m³/h):"), 1, 0)
-        self.br_spin = QDoubleSpinBox()
-        self.br_spin.setRange(0.1, 5.0); self.br_spin.setValue(1.2)
-        self.br_spin.setSingleStep(0.1); self.br_spin.setDecimals(2)
-        g4.addWidget(self.br_spin, 1, 1)
-
-        g4.addWidget(QLabel("工作时长 T (h):"), 1, 2)
-        self.work_spin = QDoubleSpinBox()
-        self.work_spin.setRange(0.5, 24.0); self.work_spin.setValue(8.0)
-        self.work_spin.setSingleStep(0.5); self.work_spin.setDecimals(1)
-        g4.addWidget(self.work_spin, 1, 3)
-
-        self._update_mask_info()
-        left_lay.addWidget(grp4)
 
         # ─ § 5. 计算按钮 ─
         btn_row = QHBoxLayout()
@@ -824,6 +978,14 @@ class DoseCalcApp(QMainWindow):
     # ─────────────────────────────────────────────────────────
     # 交互回调
     # ─────────────────────────────────────────────────────────
+    def _on_nuc_mode_changed(self):
+        is_auto = self.rb_nuc_auto.isChecked()
+        self.nuc_auto_hint.setVisible(is_auto)
+        self.nuc_manual_hint.setVisible(not is_auto)
+        # 切换到自动模式时，若已有采样数据则立即刷新
+        if is_auto and self._file_df is not None:
+            self._on_sid_changed(self.sid_combo.currentText())
+
     def _on_input_mode_changed(self):
         manual = self.rb_manual.isChecked()
         self.file_row.setVisible(not manual)
@@ -876,8 +1038,10 @@ class DoseCalcApp(QMainWindow):
                     self.conc_spins[i].setValue(float(row[col]))
                 except Exception:
                     self.conc_spins[i].setValue(0.0)
-        if 'nuclides' in row.index and pd.notna(row.get('nuclides', '')):
-            self._fill_compounds_from_row(row)
+        # 仅在"自动从采样数据读取"模式下才自动填充化合物配置
+        if self.rb_nuc_auto.isChecked():
+            if 'nuclides' in row.index and pd.notna(row.get('nuclides', '')):
+                self._fill_compounds_from_row(row)
 
     def _fill_compounds_from_row(self, row):
         try:
@@ -985,12 +1149,13 @@ class DoseCalcApp(QMainWindow):
                 'recommended': recommended,
             }
 
-            # 画图
+            # 画图（此处为防护前数据，未加口罩校正）
             self.plot_canvas.plot_fitting(
                 raw_concs, eff_corr,
                 amad_uni, gsd_uni, total_uni,
                 amad1, gsd1, frac1, amad2, gsd2, total_bi, total_corr,
-                D50_lin, GSD_lin, R2_lin
+                D50_lin, GSD_lin, R2_lin,
+                is_corrected=False
             )
 
             # 更新参数信息标签
@@ -1157,22 +1322,36 @@ class DoseCalcApp(QMainWindow):
                     log(f"  [警告] 找不到核素 {nuc_clean} 数据，跳过")
                     continue
 
-                sub = df_nuc
-                if 'aerosol_type' in df_nuc.columns:
-                    sub = df_nuc[df_nuc['aerosol_type'] == aerosol_type]
-                    if sub.empty:
-                        log(f"  [提示] {nuc_clean} 无类型 {aerosol_type}，尝试 Unspecified")
-                        sub = df_nuc[df_nuc['aerosol_type'] == 'Unspecified']
-                    if sub.empty:
+                # 1) 按化合物全名筛选；同时获取 parquet 内绑定的气溶胶类型
+                full_compound, inferred_aerosol = resolve_compound(compound)
+                # UI 下拉选的类型优先，但如果映射表有明确绑定值则覆盖
+                effective_aerosol = inferred_aerosol if inferred_aerosol else aerosol_type
+
+                sub = df_nuc.copy()
+                if 'compound' in df_nuc.columns:
+                    sub_cp = df_nuc[df_nuc['compound'] == full_compound]
+                    if not sub_cp.empty:
+                        sub = sub_cp
+                        log(f"  化合物: {compound} → {full_compound} (气溶胶: {effective_aerosol})")
+                    else:
+                        log(f"  [提示] 未在 parquet 中找到化合物 '{full_compound}'，使用全核素数据")
+                # 2) 按气溶胶类型筛选
+                if 'aerosol_type' in sub.columns:
+                    sub_at = sub[sub['aerosol_type'] == effective_aerosol]
+                    if sub_at.empty:
+                        log(f"  [提示] {nuc_clean} ({effective_aerosol}) 无匹配行，回退 Unspecified")
+                        sub_at = sub[sub['aerosol_type'] == 'Unspecified']
+                    if sub_at.empty:
                         log(f"  [警告] {nuc_clean} 无可用剂量系数，跳过")
                         continue
+                    sub = sub_at
 
                 if method == 'stage':
                     dose_nuc = 0.0
                     for si in range(len(STAGE_NAMES)):
                         conc_si = corrected_concs[si] * act_frac * abundance
                         dp_mid  = midpoints[si]
-                        e_val   = interp_dose_coeff(sub, aerosol_type, dp_mid)
+                        e_val   = interp_dose_coeff(sub, effective_aerosol, dp_mid)
                         if e_val is None:
                             e_val = interp_dose_coeff(sub, 'Unspecified', dp_mid)
                         if e_val is None:
@@ -1182,7 +1361,7 @@ class DoseCalcApp(QMainWindow):
                         log(f"    级{STAGE_NAMES[si]}({dp_mid:.2f}μm) e={e_val:.2e} C={conc_si:.3e} D={d_si:.3e}")
                     log(f"  逐级合计: {dose_nuc:.3e} Sv")
                     detail_rows.append({
-                        'compound': compound, 'aerosol_type': aerosol_type,
+                        'compound': compound, 'aerosol_type': effective_aerosol,
                         'nuclide': nuc_clean, 'amad': '逐级',
                         'e_val': np.nan,
                         'act_conc': total_masked * act_frac * abundance,
@@ -1209,8 +1388,8 @@ class DoseCalcApp(QMainWindow):
                     c1 = float(np.sum(corrected_concs * sh1)) * frac1 * act_frac * abundance
                     c2 = float(np.sum(corrected_concs * sh2)) * frac2 * act_frac * abundance
 
-                    e1 = interp_dose_coeff(sub, aerosol_type, amad1) or interp_dose_coeff(sub, 'Unspecified', amad1)
-                    e2 = interp_dose_coeff(sub, aerosol_type, amad2) or interp_dose_coeff(sub, 'Unspecified', amad2)
+                    e1 = interp_dose_coeff(sub, effective_aerosol, amad1) or interp_dose_coeff(sub, 'Unspecified', amad1)
+                    e2 = interp_dose_coeff(sub, effective_aerosol, amad2) or interp_dose_coeff(sub, 'Unspecified', amad2)
 
                     d1 = (e1 * c1 * br * work_hours) if e1 else 0.0
                     d2 = (e2 * c2 * br * work_hours) if e2 else 0.0
@@ -1221,7 +1400,7 @@ class DoseCalcApp(QMainWindow):
                     log(f"  双峰峰2(AMAD={amad2:.2f}μm) C={c2:.3e} e={e2s} D={d2:.3e} Sv")
                     log(f"  合计: {dose_nuc:.3e} Sv")
                     detail_rows.append({
-                        'compound': compound, 'aerosol_type': aerosol_type,
+                        'compound': compound, 'aerosol_type': effective_aerosol,
                         'nuclide': nuc_clean,
                         'amad': f"峰1:{amad1:.2f} / 峰2:{amad2:.2f}",
                         'e_val': np.nan, 'act_conc': c1 + c2, 'dose': dose_nuc,
@@ -1239,7 +1418,7 @@ class DoseCalcApp(QMainWindow):
                     pk_share = pk_integ / s_integ if s_integ > 0 else np.ones(len(STAGE_NAMES)) / len(STAGE_NAMES)
                     c_equiv  = float(np.sum(corrected_concs * pk_share)) * act_frac * abundance
 
-                    e_val = interp_dose_coeff(sub, aerosol_type, amad_use)
+                    e_val = interp_dose_coeff(sub, effective_aerosol, amad_use)
                     if e_val is None:
                         e_val = interp_dose_coeff(sub, 'Unspecified', amad_use)
                     if e_val is None:
@@ -1249,7 +1428,7 @@ class DoseCalcApp(QMainWindow):
                     dose_nuc = e_val * c_equiv * br * work_hours
                     log(f"  AMAD={amad_use:.2f}μm  e={e_val:.3e}  C={c_equiv:.3e}  D={dose_nuc:.3e} Sv")
                     detail_rows.append({
-                        'compound': compound, 'aerosol_type': aerosol_type,
+                        'compound': compound, 'aerosol_type': effective_aerosol,
                         'nuclide': nuc_clean, 'amad': f"{amad_use:.2f}",
                         'e_val': e_val, 'act_conc': c_equiv, 'dose': dose_nuc,
                     })
@@ -1282,7 +1461,7 @@ class DoseCalcApp(QMainWindow):
         # 日志
         self.log_edit.setPlainText(res['log'])
 
-        # 拟合图
+        # 拟合图（计算结果使用防护后校正数据绘制）
         try:
             self.plot_canvas.plot_fitting(
                 res['raw_concs'], res['eff_corr'],
@@ -1290,7 +1469,8 @@ class DoseCalcApp(QMainWindow):
                 fit.get('amad1', 5.0), fit.get('gsd1', 1.5), fit.get('frac1', 1.0),
                 fit.get('amad2', np.nan), fit.get('gsd2', np.nan),
                 fit.get('total_uni', 1.0), res['total_corr'],
-                fit.get('D50_lin', np.nan), fit.get('GSD_lin', np.nan), fit.get('R2_lin', np.nan)
+                fit.get('D50_lin', np.nan), fit.get('GSD_lin', np.nan), fit.get('R2_lin', np.nan),
+                is_corrected=True
             )
         except Exception as e:
             self._log(f"[图] 绘图失败: {e}")
