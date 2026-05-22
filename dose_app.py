@@ -3,7 +3,7 @@
 基于 PyQt5 实现，支持四种计算方法：
   1. 国标单AMAD法（默认5μm）
   2. 单峰/双峰拟合法（多模态）
-  3. Probit直线拟合法
+  3. 正态概率图法（直线拟合）
   4. 逐级独立法（每级视为独立均质气溶胶源）
 
 运行：python dose_app.py
@@ -22,6 +22,11 @@ matplotlib.use('Qt5Agg')
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+
+# 中文字体支持
+matplotlib.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
+matplotlib.rcParams['axes.unicode_minus'] = False
+matplotlib.rcParams['mathtext.fontset'] = 'stix'  # 数学符号用 STIX，兼容上下标
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -102,7 +107,7 @@ def scan_nuclides():
                 df['aerosol_type'] = df['aerosol_type'].replace('Gaseous', 'Unspecified')
             if 'element' in df.columns and 'radionuclide' in df.columns:
                 elem = str(df['element'].iloc[0])
-                nuc  = str(df['radionuclide'].iloc[0])
+                nuc  = str(df['radionuclide'].iloc[0]).replace('_', '-')
                 _nuclide_files[nuc] = (f, df)
                 _element_nuclides_map.setdefault(elem, [])
                 if nuc not in _element_nuclides_map[elem]:
@@ -200,7 +205,7 @@ class CalcThread(QThread):
 
 # ==================== 绘图 Canvas ====================
 class PlotCanvas(FigureCanvas):
-    def __init__(self, parent=None, width=12, height=4):
+    def __init__(self, parent=None, width=7, height=7):
         self.fig = Figure(figsize=(width, height), dpi=88)
         super().__init__(self.fig)
         self.setParent(parent)
@@ -210,6 +215,7 @@ class PlotCanvas(FigureCanvas):
                      amad1, gsd1, frac1, amad2, gsd2, total_bi, total_corr,
                      D50_lin, GSD_lin, R2_lin):
         self.fig.clear()
+
         x_plot = np.logspace(np.log10(0.1), np.log10(50), 300)
         stage_widths = np.log(stages_high / stages_low)
         data_density = corrected / stage_widths / total_corr if total_corr > 0 else corrected
@@ -217,76 +223,146 @@ class PlotCanvas(FigureCanvas):
         y_uni = lognormal_pdf(x_plot, amad_uni, gsd_uni) * total_uni / total_corr \
             if total_corr > 0 else np.zeros_like(x_plot)
 
-        axes = self.fig.subplots(1, 3)
+        # ── 2×2 布局 ──
+        axes = self.fig.subplots(2, 2)
 
-        # 单峰
-        ax = axes[0]
-        ax.semilogx(x_plot, y_uni, 'b-', lw=2, label=f'单峰 AMAD={amad_uni:.2f}μm')
-        ax.scatter(midpoints, data_density, c='red', s=45, edgecolors='k', zorder=5)
-        ax.set_xlabel('粒径 (μm)', fontsize=9)
+        # ── 左上：单峰拟合 ──
+        ax = axes[0, 0]
+        ax.semilogx(x_plot, y_uni, 'b-', lw=2, label=f'单峰 AMAD={amad_uni:.2f} $\mu m$')
+        ax.scatter(midpoints, data_density, c='red', s=50, edgecolors='k', zorder=5)
+        ax.set_xlabel('空气动力学粒径 ($\mu m$)', fontsize=9)
         ax.set_ylabel('归一化密度', fontsize=9)
-        ax.set_title('单峰拟合', fontsize=10)
-        ax.grid(ls='--', alpha=0.4)
+        ax.set_title('单峰对数正态拟合', fontsize=10)
+        ax.grid(ls='--', alpha=0.5)
         ax.set_xlim(0.1, 50)
         ax.set_ylim(bottom=0)
-        ax.legend(fontsize=8)
+        ax.legend(fontsize=7, loc='upper left')
 
-        # 双峰
-        ax = axes[1]
+        # ── 右上：双峰拟合 ──
+        ax = axes[0, 1]
         if not np.isnan(amad2):
-            y_total = frac1 * lognormal_pdf(x_plot, amad1, gsd1) + \
-                      (1 - frac1) * lognormal_pdf(x_plot, amad2, gsd2)
-            ax.semilogx(x_plot, y_total, 'k-', lw=2, label='总计')
-            ax.semilogx(x_plot, frac1 * lognormal_pdf(x_plot, amad1, gsd1),
-                        'b--', lw=1.5, label=f'粗峰 {amad1:.1f}μm')
-            ax.semilogx(x_plot, (1 - frac1) * lognormal_pdf(x_plot, amad2, gsd2),
-                        'r--', lw=1.5, label=f'细峰 {amad2:.1f}μm')
+            y_coarse = frac1 * lognormal_pdf(x_plot, amad1, gsd1)
+            y_fine   = (1 - frac1) * lognormal_pdf(x_plot, amad2, gsd2)
+            y_total  = y_coarse + y_fine
+            ax.semilogx(x_plot, y_total, 'k-', lw=2, label='总拟合')
+            ax.semilogx(x_plot, y_coarse, 'b--', lw=1.5, label=f'粗峰 {amad1:.1f} $\mu m$')
+            ax.semilogx(x_plot, y_fine, 'r--', lw=1.5, label=f'细峰 {amad2:.1f} $\mu m$')
         else:
             ax.semilogx(x_plot, y_uni, 'k--', lw=2, label='未检测到双峰')
-        ax.scatter(midpoints, data_density, c='red', s=45, edgecolors='k', zorder=5)
-        ax.set_xlabel('粒径 (μm)', fontsize=9)
-        ax.set_title('双峰拟合', fontsize=10)
-        ax.grid(ls='--', alpha=0.4)
+        ax.scatter(midpoints, data_density, c='red', s=50, edgecolors='k', zorder=5)
+        ax.set_xlabel('空气动力学粒径 ($\mu m$)', fontsize=9)
+        ax.set_title('双峰对数正态拟合', fontsize=10)
+        ax.grid(ls='--', alpha=0.5)
         ax.set_xlim(0.1, 50)
         ax.set_ylim(bottom=0)
-        ax.legend(fontsize=8)
+        ax.legend(fontsize=7, loc='upper left')
 
-        # Probit
-        ax = axes[2]
-        raw_acts    = raw_activities[:8]
-        filter_act  = raw_activities[8]
-        total_ra    = np.sum(raw_acts) + filter_act
+        # ── 左下：正态概率图（对齐 xf_core.py 原始逻辑）──
+        ax = axes[1, 0]
+        raw_acts = raw_activities[:8]
+        filter_act = raw_activities[8]
+        total_ra = np.sum(raw_acts) + filter_act
+
         if total_ra > 0:
-            f_all    = np.concatenate([raw_acts / total_ra, [filter_act / total_ra]])
-            cum_less = np.flip(np.cumsum(np.flip(f_all))[:-1]) * 100
-            valid    = (cum_less > 1) & (cum_less < 99)
+            # 累积小于某粒径的活度百分比（ICRP 推荐算法）
+            f     = raw_acts / total_ra
+            f_all = np.concatenate([f, [filter_act / total_ra]])
+            cum_from_fine = np.cumsum(np.flip(f_all))[:-1]
+            cum_less = np.flip(cum_from_fine) * 100
+            valid = (cum_less > 1) & (cum_less < 99)
+
             if np.sum(valid) >= 3:
                 x_v = np.log(cut_diameters[valid])
                 y_v = norm.ppf(cum_less[valid] / 100)
-                pct = [1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 99]
+
+                reg = LinearRegression().fit(x_v.reshape(-1, 1), y_v)
+                slope, intercept_ = reg.coef_[0], reg.intercept_
+
+                ln_AMAD = -intercept_ / slope
+                AMAD_probit = np.exp(ln_AMAD)
+                ln_GSD = 1 / slope
+                GSD_probit = np.exp(ln_GSD)
+                D84_1 = np.exp(ln_AMAD + ln_GSD)
+                D15_9 = np.exp(ln_AMAD - ln_GSD)
+
                 ax.set_xscale('log')
                 ax.set_xlim(0.3, 30)
-                ax.set_yticks(norm.ppf(np.array(pct) / 100))
-                ax.set_yticklabels([str(p) for p in pct], fontsize=7)
-                ax.set_ylim(norm.ppf(0.005), norm.ppf(0.995))
-                ax.scatter(cut_diameters[valid], y_v, c='red', s=50, zorder=5, label='测量数据')
-                if not np.isnan(D50_lin):
-                    x_fit = np.logspace(np.log10(0.5), np.log10(21.3), 200)
-                    reg   = LinearRegression().fit(x_v.reshape(-1, 1), y_v)
-                    ax.plot(x_fit, reg.predict(np.log(x_fit).reshape(-1, 1)),
-                            'b-', lw=2, label='拟合线')
-                    ax.scatter(D50_lin, 0, c='green', s=100, marker='s',
-                               label=f'AMAD={D50_lin:.2f}μm', zorder=6)
-                    ax.text(0.05, 0.95, f'R²={R2_lin:.4f}',
-                            transform=ax.transAxes, va='top',
-                            bbox=dict(boxstyle='round', fc='wheat', alpha=0.7), fontsize=8)
-        ax.set_xlabel('粒径 (μm)', fontsize=9)
-        ax.set_ylabel('累积活度 (%)', fontsize=9)
-        ax.set_title('Probit 图', fontsize=10)
-        ax.grid(ls='--', alpha=0.4)
-        ax.legend(fontsize=8)
 
-        self.fig.tight_layout(pad=1.5)
+                percentiles = [1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 99]
+                probit_ticks = norm.ppf(np.array(percentiles) / 100)
+                ax.set_yticks(probit_ticks)
+                ax.set_yticklabels([str(p) for p in percentiles], fontsize=7)
+                ax.set_ylim(norm.ppf(0.005), norm.ppf(0.995))
+
+                ax.scatter(cut_diameters[valid], y_v, c='red', s=60,
+                           label='实测数据', zorder=5)
+
+                x_fit = np.logspace(np.log10(0.5), np.log10(21.3), 200)
+                y_fit = slope * np.log(x_fit) + intercept_
+                ax.plot(x_fit, y_fit, 'b-', lw=2, label='ICRP 回归线')
+
+                ax.scatter(AMAD_probit, 0, c='green', s=90, marker='s',
+                           label=f'$AMAD(D_{{50}})$={AMAD_probit:.2f} $\mu m$', zorder=6)
+                ax.scatter(D84_1, norm.ppf(0.8413), c='orange', s=90, marker='s',
+                           label=f'$D_{{84.1}}$={D84_1:.1f} $\mu m$', zorder=6)
+                ax.scatter(D15_9, norm.ppf(0.1587), c='purple', s=90, marker='s',
+                           label=f'$D_{{15.9}}$={D15_9:.1f} $\mu m$', zorder=6)
+
+                ax.axhline(y=0, color='gray', ls=':', alpha=0.5)
+                ax.axhline(y=norm.ppf(0.8413), color='gray', ls=':', alpha=0.5)
+                ax.axhline(y=norm.ppf(0.1587), color='gray', ls=':', alpha=0.5)
+
+                ss_res = np.sum((y_v - reg.predict(x_v.reshape(-1, 1))) ** 2)
+                ss_tot = np.sum((y_v - np.mean(y_v)) ** 2)
+                r2_calc = 1 - ss_res / ss_tot if ss_tot > 0 else 0
+
+                ax.text(0.05, 0.95,
+                        f'$AMAD$ = {AMAD_probit:.2f} $\mu m$\n'
+                        f'$GSD$  = {GSD_probit:.2f}\n'
+                        f'$R^2$   = {r2_calc:.4f}',
+                        transform=ax.transAxes, va='top', fontsize=8,
+                        bbox=dict(boxstyle='round', fc='wheat', alpha=0.7))
+        ax.set_xlabel('空气动力学粒径 ($\mu m$)', fontsize=9)
+        ax.set_ylabel('累积活度比例 (%)', fontsize=9)
+        ax.set_title('正态概率图（ICRP方法）', fontsize=10)
+        ax.grid(True, which='both', ls='--', alpha=0.5)
+        ax.legend(fontsize=6.5, loc='lower right')
+
+        # ── 右下：拟合参数摘要 ──
+        ax = axes[1, 1]
+        ax.axis('off')
+        lines = []
+        lines.append('══════ 拟合参数摘要 ══════')
+        lines.append('')
+        lines.append('【单峰对数正态】')
+        lines.append(f'  $AMAD$ = {amad_uni:.3f} $\\mu$m')
+        lines.append(f'  $GSD$  = {gsd_uni:.3f}')
+        lines.append('')
+        if not np.isnan(amad2):
+            lines.append('【双峰对数正态】')
+            lines.append(f'  粗峰 $AMAD$ = {amad1:.3f} $\\mu$m')
+            lines.append(f'  粗峰 $GSD$  = {gsd1:.3f}')
+            lines.append(f'  细峰 $AMAD$ = {amad2:.3f} $\\mu$m')
+            lines.append(f'  细峰 $GSD$  = {gsd2:.3f}')
+            lines.append(f'  粗峰占比  = {frac1:.2%}')
+        else:
+            lines.append('【双峰对数正态】')
+            lines.append('  (未检测到)')
+        lines.append('')
+        if not np.isnan(D50_lin) and not np.isnan(GSD_lin):
+            lines.append('【正态概率图】')
+            lines.append(f'  $AMAD$ = {D50_lin:.3f} $\\mu$m')
+            lines.append(f'  $GSD$  = {GSD_lin:.3f}')
+            lines.append(f'  $R^2$   = {R2_lin:.4f}')
+        else:
+            lines.append('【正态概率图】')
+            lines.append('  (数据点不足)')
+        text = '\n'.join(lines)
+        ax.text(0.1, 0.95, text, transform=ax.transAxes, ha='left', va='top',
+                fontsize=8.5,
+                bbox=dict(boxstyle='round', fc='#f0f4ff', alpha=0.9, ec='#6688aa'))
+
+        self.fig.tight_layout(pad=2.0)
         self.draw()
 
 
@@ -528,14 +604,14 @@ class DoseCalcApp(QMainWindow):
 
         self.rb_std    = QRadioButton("方法1 · 国标单AMAD（固定 5 μm）")
         self.rb_modal  = QRadioButton("方法2 · 多模态拟合（单峰/双峰自动判断）")
-        self.rb_probit = QRadioButton("方法3 · Probit 直线拟合法")
+        self.rb_probit = QRadioButton("方法3 · 正态概率图法（直线拟合）")
         self.rb_stage  = QRadioButton("方法4 · 逐级独立法（每级视为均质源）")
         self.rb_std.setChecked(True)
         bg2 = QButtonGroup(self)
         _hints = {
             self.rb_std:    "  ↳ 使用固定 AMAD = 5 μm，符合 ICRP‑66 及国标。",
             self.rb_modal:  "  ↳ 对分级数据拟合单峰/双峰对数正态分布，自动推荐最优峰型。",
-            self.rb_probit: "  ↳ 用累积活度‑Probit 图进行直线回归，求中位粒径 AMAD 与 GSD。",
+            self.rb_probit: "  ↳ 用累积活度–正态概率图进行直线回归，求 AMAD 与 GSD。",
             self.rb_stage:  "  ↳ 每级视为独立气溶胶源，利用该级中值粒径直接查表后逐级累加。",
         }
         self._hint_lbls = {}
@@ -549,6 +625,22 @@ class DoseCalcApp(QMainWindow):
             self._hint_lbls[rb] = hl
             rb.toggled.connect(self._update_method_hints)
         self._update_method_hints()
+
+        # 拟合按钮（选完数据后手动点击触发）
+        fit_btn_row = QHBoxLayout()
+        fit_btn_row.addStretch()
+        self.fit_btn = QPushButton("🔍  运行拟合")
+        self.fit_btn.setMinimumHeight(36)
+        self.fit_btn.setFont(QFont("微软雅黑", 11, QFont.Bold))
+        self.fit_btn.setStyleSheet(
+            "QPushButton { background:#27ae60; color:white; border-radius:5px; padding:4px 20px; }"
+            "QPushButton:hover { background:#2ecc71; }"
+            "QPushButton:disabled { background:#aaa; }"
+        )
+        self.fit_btn.clicked.connect(self._on_fit)
+        fit_btn_row.addWidget(self.fit_btn)
+        g2.addLayout(fit_btn_row)
+
         left_lay.addWidget(grp2)
 
         # ─ § 3. 核素 / 化合物配置 ─
@@ -650,7 +742,7 @@ class DoseCalcApp(QMainWindow):
         tab_fit = QWidget()
         tfl = QVBoxLayout(tab_fit)
         tfl.setContentsMargins(4, 4, 4, 4)
-        self.plot_canvas = PlotCanvas(tab_fit, width=12, height=4)
+        self.plot_canvas = PlotCanvas(tab_fit, width=7, height=7)
         tfl.addWidget(self.plot_canvas, 1)
         self.fit_info_lbl = QLabel("拟合参数将在计算后显示")
         self.fit_info_lbl.setStyleSheet(
@@ -862,6 +954,63 @@ class DoseCalcApp(QMainWindow):
                 hl.setStyleSheet("color:#999; font-size:10px; margin-left:16px;")
 
     # ─────────────────────────────────────────────────────────
+    # 手动拟合（选好数据后点击「运行拟合」按钮触发）
+    # ─────────────────────────────────────────────────────────
+    def _on_fit(self):
+        """手动触发：运行三种拟合并更新图表"""
+        raw_concs = np.array([sp.value() for sp in self.conc_spins], dtype=float)
+        if np.sum(raw_concs) == 0:
+            return
+
+        try:
+            eff_corr = apply_efficiency_correction(raw_concs)
+            total_corr = float(np.sum(eff_corr))
+
+            amad_uni, gsd_uni, total_uni = fit_unimodal(eff_corr)
+            amad1, gsd1, frac1, amad2, gsd2, total_bi = fit_bimodal(eff_corr)
+            D50_lin, GSD_lin, D84_lin, D16_lin, R2_lin = fit_linear_probit(raw_concs)
+
+            ratio = amad1 / amad2 if not np.isnan(amad2) and amad2 > 0 else np.nan
+            recommended = recommend_method(amad2, ratio, frac1, R2_lin)
+
+            # 存储临时拟合结果
+            self._fit_auto = {
+                'raw_concs': raw_concs,
+                'eff_corr': eff_corr,
+                'total_corr': total_corr,
+                'amad_uni': amad_uni, 'gsd_uni': gsd_uni, 'total_uni': total_uni,
+                'amad1': amad1, 'gsd1': gsd1, 'frac1': frac1,
+                'amad2': amad2, 'gsd2': gsd2,
+                'D50_lin': D50_lin, 'GSD_lin': GSD_lin, 'R2_lin': R2_lin,
+                'recommended': recommended,
+            }
+
+            # 画图
+            self.plot_canvas.plot_fitting(
+                raw_concs, eff_corr,
+                amad_uni, gsd_uni, total_uni,
+                amad1, gsd1, frac1, amad2, gsd2, total_bi, total_corr,
+                D50_lin, GSD_lin, R2_lin
+            )
+
+            # 更新参数信息标签
+            parts = [f"【推荐方法】{recommended}"]
+            parts.append(f"单峰 AMAD={amad_uni:.3f} \u03bcm  GSD={gsd_uni:.3f}")
+            if not np.isnan(amad2):
+                parts.append(f"双峰：粗峰={amad1:.3f} \u03bcm  细峰={amad2:.3f} \u03bcm  粗峰={frac1:.2%}")
+            if not np.isnan(D50_lin):
+                parts.append(f"正态概率图 AMAD={D50_lin:.3f} \u03bcm  GSD={GSD_lin:.3f}  R\u00b2={R2_lin:.4f}")
+            self.fit_info_lbl.setText("   |   ".join(parts))
+
+            self.log_edit.append(f"[拟合] 单峰 AMAD={amad_uni:.3f}  "
+                                 f"双峰粗峰={amad1:.3f}  正态概率图 D50={D50_lin:.3f}")
+            self.status_bar.showMessage(f"✓ 拟合完成 | 推荐: {recommended}", 5000)
+
+        except Exception as e:
+            import traceback
+            self.log_edit.append(f"[拟合失败] {traceback.format_exc()}")
+
+    # ─────────────────────────────────────────────────────────
     # 核心计算入口
     # ─────────────────────────────────────────────────────────
     def _on_calc(self):
@@ -938,9 +1087,9 @@ class DoseCalcApp(QMainWindow):
             log("拟合双峰…")
             amad1, gsd1, frac1, amad2, gsd2, total_bi = fit_bimodal(eff_corr)
             log(f"  双峰: 粗峰={amad1:.3f} μm  细峰={amad2:.3f} μm  粗峰占比={frac1:.3f}")
-            log("Probit 拟合…")
+            log("正态概率图拟合…")
             D50_lin, GSD_lin, D84_lin, D16_lin, R2_lin = fit_linear_probit(corrected_concs)
-            log(f"  Probit: AMAD={D50_lin:.3f} μm  GSD={GSD_lin:.3f}  R²={R2_lin:.4f}")
+            log(f"  正态概率图: AMAD={D50_lin:.3f} μm  GSD={GSD_lin:.3f}  R²={R2_lin:.4f}")
             ratio = amad1 / amad2 if not np.isnan(amad2) and amad2 > 0 else np.nan
             recommended = recommend_method(amad2, ratio, frac1, R2_lin)
             log(f"推荐方法: {recommended}")
@@ -960,9 +1109,9 @@ class DoseCalcApp(QMainWindow):
 
         elif method == 'probit':
             D50_lin, GSD_lin, D84_lin, D16_lin, R2_lin = fit_linear_probit(corrected_concs)
-            log(f"Probit: AMAD={D50_lin:.3f} μm  GSD={GSD_lin:.3f}  R²={R2_lin:.4f}")
+            log(f"正态概率图: AMAD={D50_lin:.3f} μm  GSD={GSD_lin:.3f}  R²={R2_lin:.4f}")
             if np.isnan(D50_lin):
-                raise ValueError("Probit 拟合失败（有效数据点 < 3），请检查浓度数据。")
+                raise ValueError("正态概率图拟合失败（有效数据点 < 3），请检查浓度数据。")
             amad_uni, gsd_uni, total_uni = fit_unimodal(eff_corr)
             fit_res = {
                 'method': 'probit', 'amad': D50_lin, 'gsd': GSD_lin,
@@ -970,7 +1119,7 @@ class DoseCalcApp(QMainWindow):
                 'amad1': D50_lin, 'gsd1': GSD_lin, 'frac1': 1.0,
                 'amad2': np.nan, 'gsd2': np.nan,
                 'D50_lin': D50_lin, 'GSD_lin': GSD_lin, 'R2_lin': R2_lin,
-                'recommended': f'Probit (R²={R2_lin:.4f})',
+                'recommended': f'正态概率法 (R²={R2_lin:.4f})',
             }
 
         else:  # stage
@@ -1149,14 +1298,14 @@ class DoseCalcApp(QMainWindow):
         # 拟合参数信息
         rec    = fit.get('recommended', '')
         parts  = [f"【推荐/使用方法】{rec}"]
-        parts.append(f"单峰 AMAD={fit.get('amad_uni', 5):.3f} μm  GSD={fit.get('gsd_uni', 1.5):.3f}")
+        parts.append(f"单峰 AMAD={fit.get('amad_uni', 5):.3f} \u03bcm  GSD={fit.get('gsd_uni', 1.5):.3f}")
         if not np.isnan(fit.get('amad2', np.nan)):
-            parts.append(f"双峰：粗峰={fit.get('amad1', 0):.3f} μm  细峰={fit.get('amad2', 0):.3f} μm  "
+            parts.append(f"双峰：粗峰={fit.get('amad1', 0):.3f} \u03bcm  细峰={fit.get('amad2', 0):.3f} \u03bcm  "
                          f"粗峰占比={fit.get('frac1', 0):.2%}")
         D50_lin = fit.get('D50_lin', np.nan)
         if not np.isnan(D50_lin):
-            parts.append(f"Probit AMAD={D50_lin:.3f} μm  GSD={fit.get('GSD_lin', 0):.3f}  "
-                         f"R²={fit.get('R2_lin', 0):.4f}")
+            parts.append(f"正态概率图 AMAD={D50_lin:.3f} \u03bcm  GSD={fit.get('GSD_lin', 0):.3f}  "
+                         f"R\u00b2={fit.get('R2_lin', 0):.4f}")
         self.fit_info_lbl.setText("   |   ".join(parts))
 
         # 剂量结果表
@@ -1177,7 +1326,7 @@ class DoseCalcApp(QMainWindow):
         td = res['total_dose']
         pf = res['mask_pf_overall']
         mn = {'std': '国标单AMAD法', 'modal': '多模态拟合法',
-              'probit': 'Probit拟合法', 'stage': '逐级独立法'}.get(res['method'], res['method'])
+              'probit': '正态概率图法', 'stage': '逐级独立法'}.get(res['method'], res['method'])
         self.summary_lbl.setText(
             f"【{mn}】  总有效剂量 = {td:.4e} Sv"
             f"  |  口罩防护因子 = {pf:.4f}"
@@ -1205,7 +1354,7 @@ class DoseCalcApp(QMainWindow):
             QMessageBox.information(self, "提示", "请先完成一次计算")
             return
         res = self._fit_result
-        mn  = {'std': '国标法', 'modal': '多模态', 'probit': 'Probit',
+        mn  = {'std': '国标法', 'modal': '多模态', 'probit': '正态概率',
                'stage': '逐级'}.get(res['method'], res['method'])
         comps = ','.join(sorted({r['compound'] for r in res['detail_rows']}))
         nucs  = ','.join(sorted({r['nuclide']  for r in res['detail_rows']}))

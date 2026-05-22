@@ -1,6 +1,6 @@
 """
 xf.py 核心函数模块
-整合自 xf.py，用于多峰对数正态分布拟合和probit直线拟合
+整合自 xf.py，用于多峰对数正态分布拟合和正态概率图直线拟合
 """
 import numpy as np
 import pandas as pd
@@ -139,7 +139,7 @@ def fit_bimodal(activities_corrected):
     return amad1, gsd1, frac1, amad2, gsd2, total
 
 
-# ==================== 8. 直线拟合 Probit 法 ====================
+# ==================== 8. 直线拟合 正态概率图法 ====================
 
 def fit_linear_probit(activities):
     """
@@ -231,7 +231,7 @@ def recommend_method(amad2, ratio_amads, frac1, linear_R2):
 
     # 2. 不是双峰 → 判断是否能用逐级法
     if not np.isnan(linear_R2) and linear_R2 >= 0.85:
-        return "Linear Probit (Recommended)"
+        return "正态概率图法 (Recommended)"
 
     # 3. 都不行 → 单峰
     return "Unimodal (Recommended)"
@@ -360,7 +360,7 @@ def plot_fitting_results(workshop, sampling_id, raw_activities, corrected_activi
         ax.axhline(y=norm.ppf(0.8413), color='gray', linestyle=':', alpha=0.5)
         ax.axhline(y=norm.ppf(0.1587), color='gray', linestyle=':', alpha=0.5)
 
-        ax.set_title(f'Probit Plot | {workshop} {sampling_id}')
+        ax.set_title(f'正态概率图 | {workshop} {sampling_id}')
         ax.legend()
 
         y_pred = reg.predict(x.reshape(-1, 1))
@@ -370,7 +370,7 @@ def plot_fitting_results(workshop, sampling_id, raw_activities, corrected_activi
         ax.text(0.05, 0.95, f'R² = {r2:.4f}', transform=ax.transAxes,
                 verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     else:
-        plt.text(0.5, 0.5, 'Insufficient data for probit plot',
+        plt.text(0.5, 0.5, '数据不足，无法绘制正态概率图',
                  ha='center', va='center', transform=plt.gca().transAxes)
 
     plt.tight_layout()
