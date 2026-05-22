@@ -1,10 +1,15 @@
 """
-空气采样法内照射剂量计算系统 v3.1 (桌面版)
+空气采样法内照射剂量计算系统 v3.2 (桌面版)
 基于 PyQt5 实现，支持四种计算方法：
   1. 国标单AMAD法（默认5μm）
   2. 单峰/双峰拟合法（多模态）
   3. 正态概率图法（直线拟合）
   4. 逐级独立法（每级视为独立均质气溶胶源）
+
+v3.2 新增：
+  - AIC/BIC 信息准则辅助方法选择
+  - 数据质量自动检测（低活度/少级数 → 强制国标法）
+  - 导出功能（Excel 完整报告 / CSV / 日志 / 含图一键导出）
 
 运行：python dose_app.py
 """
@@ -45,6 +50,8 @@ warnings.filterwarnings('ignore')
 try:
     from xf_core import (lognormal_pdf, stage_integral, fit_unimodal, fit_bimodal,
                          fit_linear_probit, judge_distribution, recommend_method,
+                         calc_unimodal_stats, calc_bimodal_stats, calc_probit_stats,
+                         data_quality_assessment,
                          stages_low, stages_high, cut_diameters, midpoints,
                          efficiency, apply_efficiency_correction)
 except ImportError as e:
@@ -566,7 +573,7 @@ class NuclideCompoundWidget(QFrame):
 class DoseCalcApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("空气采样法内照射剂量计算系统 v3.1")
+        self.setWindowTitle("空气采样法内照射剂量计算系统 v3.2")
         self.setMinimumSize(1100, 700)
         self.resize(1440, 860)
 
@@ -588,7 +595,7 @@ class DoseCalcApp(QMainWindow):
         root_lay.setContentsMargins(8, 4, 8, 4)
 
         # 顶部标题
-        title = QLabel("空气采样法 · 内照射剂量计算系统  v3.1")
+        title = QLabel("空气采样法 · 内照射剂量计算系统  v3.2")
         title.setAlignment(Qt.AlignCenter)
         title.setFont(QFont("微软雅黑", 14, QFont.Bold))
         title.setStyleSheet("color:#1a5276; padding:3px 0;")
@@ -948,6 +955,47 @@ class DoseCalcApp(QMainWindow):
         accum_btn_row.addWidget(btn_clear_accum)
         accum_btn_row.addStretch()
         tdl.addLayout(accum_btn_row)
+
+        # ─ ⑤ 导出结果 ─
+        grp_export = QGroupBox("⑤ 导出结果")
+        grp_export.setFont(QFont("微软雅黑", 10, QFont.Bold))
+        exp_lay = QHBoxLayout(grp_export)
+        exp_lay.setSpacing(8)
+
+        self.btn_export_xlsx = QPushButton("📥 导出 Excel 完整报告")
+        self.btn_export_xlsx.setMinimumHeight(34)
+        self.btn_export_xlsx.setStyleSheet(
+            "QPushButton { background:#2980b9; color:white; border-radius:4px; padding:3px 14px; }"
+            "QPushButton:hover { background:#3498db; }")
+        self.btn_export_xlsx.clicked.connect(self._export_xlsx)
+
+        self.btn_export_csv = QPushButton("📄 导出 CSV 结果表")
+        self.btn_export_csv.setMinimumHeight(34)
+        self.btn_export_csv.setStyleSheet(
+            "QPushButton { background:#27ae60; color:white; border-radius:4px; padding:3px 14px; }"
+            "QPushButton:hover { background:#2ecc71; }")
+        self.btn_export_csv.clicked.connect(self._export_csv)
+
+        self.btn_export_log = QPushButton("📝 导出计算日志 (txt)")
+        self.btn_export_log.setMinimumHeight(34)
+        self.btn_export_log.setStyleSheet(
+            "QPushButton { background:#8e44ad; color:white; border-radius:4px; padding:3px 14px; }"
+            "QPushButton:hover { background:#9b59b6; }")
+        self.btn_export_log.clicked.connect(self._export_log)
+
+        self.btn_export_all = QPushButton("📦 导出全部（含图）")
+        self.btn_export_all.setMinimumHeight(34)
+        self.btn_export_all.setStyleSheet(
+            "QPushButton { background:#c0392b; color:white; border-radius:4px; padding:3px 14px; }"
+            "QPushButton:hover { background:#e74c3c; }")
+        self.btn_export_all.clicked.connect(self._export_all)
+
+        exp_lay.addWidget(self.btn_export_xlsx)
+        exp_lay.addWidget(self.btn_export_csv)
+        exp_lay.addWidget(self.btn_export_log)
+        exp_lay.addWidget(self.btn_export_all)
+        exp_lay.addStretch()
+        tdl.addWidget(grp_export)
         result_tabs.addTab(tab_dose, "💊 剂量结果")
 
         # ── Tab 3: 计算日志 ──
@@ -1130,12 +1178,30 @@ class DoseCalcApp(QMainWindow):
             eff_corr = apply_efficiency_correction(raw_concs)
             total_corr = float(np.sum(eff_corr))
 
+            # 数据质量评估
+            quality = data_quality_assessment(raw_concs)
+
             amad_uni, gsd_uni, total_uni = fit_unimodal(eff_corr)
             amad1, gsd1, frac1, amad2, gsd2, total_bi = fit_bimodal(eff_corr)
             D50_lin, GSD_lin, D84_lin, D16_lin, R2_lin = fit_linear_probit(raw_concs)
 
+            # AIC/BIC 计算
+            aic_uni, bic_uni = calc_unimodal_stats(amad_uni, gsd_uni, total_uni, eff_corr)
+            aic_bi, bic_bi = (np.nan, np.nan)
+            if not np.isnan(amad2):
+                aic_bi, bic_bi = calc_bimodal_stats(
+                    amad1, gsd1, frac1, amad2, gsd2, total_bi, eff_corr)
+            # probit 的 AIC/BIC（独立于上面的 fit_linear_probit，额外算 stats）
+            D50_pb, GSD_pb, R2_pb, aic_pb, bic_pb, n_pb = calc_probit_stats(raw_concs)
+
             ratio = amad1 / amad2 if not np.isnan(amad2) and amad2 > 0 else np.nan
-            recommended = recommend_method(amad2, ratio, frac1, R2_lin)
+            recommended = recommend_method(
+                amad2, ratio, frac1, R2_lin,
+                aic_uni=aic_uni, bic_uni=bic_uni,
+                aic_bi=aic_bi, bic_bi=bic_bi,
+                quality_flag=quality['quality_flag'],
+                n_nonzero=quality['n_nonzero'],
+            )
 
             # 存储临时拟合结果
             self._fit_auto = {
@@ -1147,6 +1213,10 @@ class DoseCalcApp(QMainWindow):
                 'amad2': amad2, 'gsd2': gsd2,
                 'D50_lin': D50_lin, 'GSD_lin': GSD_lin, 'R2_lin': R2_lin,
                 'recommended': recommended,
+                'aic_uni': aic_uni, 'bic_uni': bic_uni,
+                'aic_bi': aic_bi, 'bic_bi': bic_bi,
+                'aic_probit': aic_pb, 'bic_probit': bic_pb, 'n_probit': n_pb,
+                'quality': quality,
             }
 
             # 画图（此处为防护前数据，未加口罩校正）
@@ -1158,17 +1228,23 @@ class DoseCalcApp(QMainWindow):
                 is_corrected=False
             )
 
-            # 更新参数信息标签
+            # 更新参数信息标签（含 AIC/BIC）
             parts = [f"【推荐方法】{recommended}"]
-            parts.append(f"单峰 AMAD={amad_uni:.3f} \u03bcm  GSD={gsd_uni:.3f}")
+            parts.append(f"单峰 AMAD={amad_uni:.3f} \u03bcm  GSD={gsd_uni:.3f}"
+                         f"  AIC={aic_uni:.1f}  BIC={bic_uni:.1f}")
             if not np.isnan(amad2):
-                parts.append(f"双峰：粗峰={amad1:.3f} \u03bcm  细峰={amad2:.3f} \u03bcm  粗峰={frac1:.2%}")
+                parts.append(f"双峰：粗峰={amad1:.3f} \u03bcm  细峰={amad2:.3f} \u03bcm  粗峰={frac1:.2%}"
+                             f"  AIC={aic_bi:.1f}  BIC={bic_bi:.1f}")
             if not np.isnan(D50_lin):
-                parts.append(f"正态概率图 AMAD={D50_lin:.3f} \u03bcm  GSD={GSD_lin:.3f}  R\u00b2={R2_lin:.4f}")
-            self.fit_info_lbl.setText("   |   ".join(parts))
+                parts.append(f"正态概率图 AMAD={D50_lin:.3f} \u03bcm  GSD={GSD_lin:.3f}  R\u00b2={R2_lin:.4f}"
+                             f"  AIC={aic_pb:.1f}")
+            parts.append(f"数据质量: {quality['quality_flag']}（非零级数={quality['n_nonzero']}/9）")
+            self.fit_info_lbl.setText("  \n".join(parts))
 
-            self.log_edit.append(f"[拟合] 单峰 AMAD={amad_uni:.3f}  "
-                                 f"双峰粗峰={amad1:.3f}  正态概率图 D50={D50_lin:.3f}")
+            self.log_edit.append(f"[拟合] 单峰 AMAD={amad_uni:.3f}  AIC={aic_uni:.1f} | "
+                                 f"双峰粗峰={amad1:.3f}  AIC={aic_bi:.1f} | "
+                                 f"正态概率图 D50={D50_lin:.3f}  R²={R2_lin:.4f} | "
+                                 f"数据质量={quality['quality_flag']}")
             self.status_bar.showMessage(f"✓ 拟合完成 | 推荐: {recommended}", 5000)
 
         except Exception as e:
@@ -1246,6 +1322,9 @@ class DoseCalcApp(QMainWindow):
             log("使用国标法：AMAD = 5 μm（固定）")
 
         elif method == 'modal':
+            # 数据质量评估
+            quality = data_quality_assessment(corrected_concs)
+
             log("拟合单峰…")
             amad_uni, gsd_uni, total_uni = fit_unimodal(eff_corr)
             log(f"  单峰: AMAD={amad_uni:.3f} μm  GSD={gsd_uni:.3f}")
@@ -1255,20 +1334,45 @@ class DoseCalcApp(QMainWindow):
             log("正态概率图拟合…")
             D50_lin, GSD_lin, D84_lin, D16_lin, R2_lin = fit_linear_probit(corrected_concs)
             log(f"  正态概率图: AMAD={D50_lin:.3f} μm  GSD={GSD_lin:.3f}  R²={R2_lin:.4f}")
+
+            # AIC/BIC 计算
+            aic_uni, bic_uni = calc_unimodal_stats(amad_uni, gsd_uni, total_uni, eff_corr)
+            aic_bi, bic_bi = (np.nan, np.nan)
+            if not np.isnan(amad2):
+                aic_bi, bic_bi = calc_bimodal_stats(
+                    amad1, gsd1, frac1, amad2, gsd2, total_bi, eff_corr)
+            log(f"  AIC: 单峰={aic_uni:.1f}  双峰={aic_bi:.1f}  |  BIC: 单峰={bic_uni:.1f}  双峰={bic_bi:.1f}")
+            log(f"  数据质量: {quality['quality_flag']}（非零级数={quality['n_nonzero']}/9）")
+
             ratio = amad1 / amad2 if not np.isnan(amad2) and amad2 > 0 else np.nan
-            recommended = recommend_method(amad2, ratio, frac1, R2_lin)
+            recommended = recommend_method(
+                amad2, ratio, frac1, R2_lin,
+                aic_uni=aic_uni, bic_uni=bic_uni,
+                aic_bi=aic_bi, bic_bi=bic_bi,
+                quality_flag=quality['quality_flag'],
+                n_nonzero=quality['n_nonzero'],
+            )
             log(f"推荐方法: {recommended}")
+
+            D50_pb, GSD_pb, R2_pb, aic_pb, bic_pb, n_pb = calc_probit_stats(corrected_concs)
+
             fit_res = {
                 'method': 'modal', 'recommended': recommended,
                 'amad_uni': amad_uni, 'gsd_uni': gsd_uni, 'total_uni': total_uni,
                 'amad1': amad1, 'gsd1': gsd1, 'frac1': frac1,
                 'amad2': amad2, 'gsd2': gsd2,
                 'D50_lin': D50_lin, 'GSD_lin': GSD_lin, 'R2_lin': R2_lin,
+                'aic_uni': aic_uni, 'bic_uni': bic_uni,
+                'aic_bi': aic_bi, 'bic_bi': bic_bi,
+                'aic_probit': aic_pb, 'bic_probit': bic_pb, 'n_probit': n_pb,
+                'quality': quality,
             }
             if 'Bimodal' in recommended:
                 fit_res['amad'] = amad1; fit_res['gsd'] = gsd1
-            elif 'Linear' in recommended and not np.isnan(D50_lin):
+            elif '正态概率' in recommended and not np.isnan(D50_lin):
                 fit_res['amad'] = D50_lin; fit_res['gsd'] = GSD_lin
+            elif '国标' in recommended:
+                fit_res['amad'] = 5.0; fit_res['gsd'] = 1.5
             else:
                 fit_res['amad'] = amad_uni; fit_res['gsd'] = gsd_uni
 
@@ -1478,15 +1582,23 @@ class DoseCalcApp(QMainWindow):
         # 拟合参数信息
         rec    = fit.get('recommended', '')
         parts  = [f"【推荐/使用方法】{rec}"]
-        parts.append(f"单峰 AMAD={fit.get('amad_uni', 5):.3f} \u03bcm  GSD={fit.get('gsd_uni', 1.5):.3f}")
+        amad_uni = fit.get('amad_uni', 5)
+        parts.append(f"单峰 AMAD={amad_uni:.3f} \u03bcm  GSD={fit.get('gsd_uni', 1.5):.3f}"
+                     f"  AIC={fit.get('aic_uni', np.nan):.1f}  BIC={fit.get('bic_uni', np.nan):.1f}")
         if not np.isnan(fit.get('amad2', np.nan)):
             parts.append(f"双峰：粗峰={fit.get('amad1', 0):.3f} \u03bcm  细峰={fit.get('amad2', 0):.3f} \u03bcm  "
-                         f"粗峰占比={fit.get('frac1', 0):.2%}")
+                         f"粗峰占比={fit.get('frac1', 0):.2%}"
+                         f"  AIC={fit.get('aic_bi', np.nan):.1f}  BIC={fit.get('bic_bi', np.nan):.1f}")
         D50_lin = fit.get('D50_lin', np.nan)
         if not np.isnan(D50_lin):
             parts.append(f"正态概率图 AMAD={D50_lin:.3f} \u03bcm  GSD={fit.get('GSD_lin', 0):.3f}  "
-                         f"R\u00b2={fit.get('R2_lin', 0):.4f}")
-        self.fit_info_lbl.setText("   |   ".join(parts))
+                         f"R\u00b2={fit.get('R2_lin', 0):.4f}"
+                         f"  AIC={fit.get('aic_probit', np.nan):.1f}")
+        q = fit.get('quality', {})
+        if q:
+            parts.append(f"数据质量: {q.get('quality_flag', '?')}（非零级数={q.get('n_nonzero', '?')}/9"
+                         f"  总活度={q.get('total_activity', 0):.3e} Bq/m³）")
+        self.fit_info_lbl.setText("  \n".join(parts))
 
         # 剂量结果表
         self.result_table.setRowCount(0)
@@ -1555,6 +1667,362 @@ class DoseCalcApp(QMainWindow):
     def _clear_accum(self):
         self.accum_table.setRowCount(0)
         self.accum_total_lbl.setText("")
+
+    # ─────────────────────────────────────────────────────────
+    # 导出功能
+    # ─────────────────────────────────────────────────────────
+    def _check_result(self):
+        if self._fit_result is None:
+            QMessageBox.information(self, "提示", "请先完成一次计算再导出。")
+            return False
+        return True
+
+    def _build_export_data(self):
+        """构建包含所有计算信息的字典，供各导出格式共用"""
+        res = self._fit_result
+        fit = res['fit_res']
+        q   = fit.get('quality', {})
+
+        # ─ 输入参数 ─
+        raw_concs = res['raw_concs']
+        input_table = []
+        for i, (name, rng) in enumerate(zip(STAGE_NAMES, STAGE_RANGES)):
+            input_table.append({
+                '级别': name, '粒径范围': rng,
+                '原始浓度 (Bq/m³)': f"{raw_concs[i]:.6e}",
+                '校正后浓度 (Bq/m³)': f"{res['corrected_concs'][i]:.6e}",
+            })
+
+        # ─ 拟合结果 ─
+        fitting_table = []
+        fitting_table.append({'方法': '单峰对数正态', 'AMAD (μm)': f"{fit.get('amad_uni', 0):.3f}",
+                              'GSD': f"{fit.get('gsd_uni', 0):.3f}",
+                              'AIC': f"{fit.get('aic_uni', np.nan):.1f}",
+                              'BIC': f"{fit.get('bic_uni', np.nan):.1f}"})
+        if not np.isnan(fit.get('amad2', np.nan)):
+            fitting_table.append({'方法': '双峰-粗峰', 'AMAD (μm)': f"{fit.get('amad1', 0):.3f}",
+                                  'GSD': f"{fit.get('gsd1', 0):.3f}",
+                                  '粗峰占比': f"{fit.get('frac1', 0):.2%}",
+                                  'AIC': f"{fit.get('aic_bi', np.nan):.1f}",
+                                  'BIC': f"{fit.get('bic_bi', np.nan):.1f}"})
+            fitting_table.append({'方法': '双峰-细峰', 'AMAD (μm)': f"{fit.get('amad2', 0):.3f}",
+                                  'GSD': f"{fit.get('gsd2', 0):.3f}",
+                                  'AIC': f"{fit.get('aic_bi', np.nan):.1f}",
+                                  'BIC': f"{fit.get('bic_bi', np.nan):.1f}"})
+        if not np.isnan(fit.get('D50_lin', np.nan)):
+            fitting_table.append({'方法': '正态概率图', 'AMAD (μm)': f"{fit.get('D50_lin', 0):.3f}",
+                                  'GSD': f"{fit.get('GSD_lin', 0):.3f}",
+                                  'R²': f"{fit.get('R2_lin', 0):.4f}",
+                                  'AIC': f"{fit.get('aic_probit', np.nan):.1f}",
+                                  'BIC': f"{fit.get('bic_probit', np.nan):.1f}"})
+
+        # ─ 剂量明细 ─
+        dose_rows = res['detail_rows']
+
+        # ─ 汇总 ─
+        mn_map = {'std': '国标单AMAD法', 'modal': '多模态拟合法',
+                  'probit': '正态概率图法', 'stage': '逐级独立法'}
+        summary = {
+            '计算方法': mn_map.get(res['method'], res['method']),
+            '推荐方法': fit.get('recommended', ''),
+            '口罩型号': res['mask_type'],
+            '总防护因子': f"{res['mask_pf_overall']:.6f}",
+            '原始总浓度 (Bq/m³)': f"{res['total_raw']:.4e}",
+            '校正后总浓度 (Bq/m³)': f"{res['total_masked']:.4e}",
+            '总有效剂量 (Sv)': f"{res['total_dose']:.4e}",
+            '呼吸速率 (m³/h)': f"{res['br']:.2f}",
+            '工作时长 (h)': f"{res['work_hours']:.1f}",
+            '数据质量': q.get('quality_flag', '?'),
+            '非零级数': f"{q.get('n_nonzero', '?')}/9",
+        }
+
+        return {
+            'input': input_table,
+            'fitting': fitting_table,
+            'dose_rows': dose_rows,
+            'summary': summary,
+            'log': res['log'],
+        }
+
+    def _export_xlsx(self):
+        if not self._check_result():
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出 Excel 报告", "dose_report.xlsx", "Excel (*.xlsx)")
+        if not path:
+            return
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+            from openpyxl.utils import get_column_letter
+        except ImportError:
+            QMessageBox.critical(self, "缺少依赖", "请安装 openpyxl: pip install openpyxl")
+            return
+
+        data = self._build_export_data()
+        wb = Workbook()
+
+        thin_border = Border(
+            left=Side(style='thin'), right=Side(style='thin'),
+            top=Side(style='thin'), bottom=Side(style='thin'))
+        header_fill = PatternFill(start_color='1A5276', end_color='1A5276', fill_type='solid')
+        header_font = Font(name='微软雅黑', bold=True, color='FFFFFF', size=11)
+        title_font  = Font(name='微软雅黑', bold=True, size=14, color='1A5276')
+        cell_font   = Font(name='Consolas', size=10)
+        warn_font   = Font(name='微软雅黑', bold=True, size=11, color='C0392B')
+
+        def write_table(ws, headers, rows, start_row=1, col_widths=None):
+            for ci, h in enumerate(headers, 1):
+                c = ws.cell(row=start_row, column=ci, value=h)
+                c.font, c.fill, c.alignment, c.border = header_font, header_fill, Alignment(horizontal='center'), thin_border
+            for ri, row in enumerate(rows):
+                for ci, val in enumerate(row.values() if isinstance(row, dict) else row, 1):
+                    c = ws.cell(row=start_row + 1 + ri, column=ci, value=val)
+                    c.font, c.alignment, c.border = cell_font, Alignment(horizontal='center'), thin_border
+            if col_widths:
+                for ci, w in enumerate(col_widths, 1):
+                    ws.column_dimensions[get_column_letter(ci)].width = w
+
+        # ── Sheet 1: 汇总 ──
+        ws1 = wb.active
+        ws1.title = "汇总"
+        ws1.cell(row=1, column=1, value="空气采样法内照射剂量计算报告").font = title_font
+        ws1.merge_cells('A1:B1')
+        ws1.cell(row=2, column=1, value=f"生成时间: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}").font = Font(name='微软雅黑', size=10, color='666666')
+        for ri, (k, v) in enumerate(data['summary'].items(), 4):
+            ws1.cell(row=ri, column=1, value=k).font = Font(name='微软雅黑', bold=True, size=10)
+            ws1.cell(row=ri, column=2, value=v).font = cell_font
+            if k == '数据质量' and 'poor' in str(v).lower():
+                ws1.cell(row=ri, column=2).font = warn_font
+        ws1.column_dimensions['A'].width = 24
+        ws1.column_dimensions['B'].width = 32
+
+        # ── Sheet 2: 拟合参数 ──
+        ws2 = wb.create_sheet("拟合参数")
+        ws2.cell(row=1, column=1, value="拟合参数与信息准则").font = title_font
+        write_table(ws2, list(data['fitting'][0].keys()), data['fitting'], start_row=3,
+                    col_widths=[18, 16, 14, 12, 12, 12])
+
+        # ── Sheet 3: 剂量明细 ──
+        ws3 = wb.create_sheet("剂量明细")
+        ws3.cell(row=1, column=1, value="逐核素剂量明细").font = title_font
+        dose_headers = ['化合物', '气溶胶类型', '核素', 'AMAD/粒径', 'e (Sv/Bq)', '活度贡献 (Bq/m³)', '剂量 (Sv)']
+        dose_rows = [[
+            r['compound'], r['aerosol_type'], r['nuclide'],
+            str(r['amad']),
+            f"{r['e_val']:.3e}" if not np.isnan(r.get('e_val', np.nan)) else "逐级",
+            f"{r['act_conc']:.4e}", f"{r['dose']:.4e}",
+        ] for r in data['dose_rows']]
+        write_table(ws3, dose_headers, dose_rows, start_row=3,
+                    col_widths=[14, 22, 12, 20, 14, 20, 16])
+
+        # ── Sheet 4: 输入数据 ──
+        ws4 = wb.create_sheet("输入数据")
+        ws4.cell(row=1, column=1, value="输入采样数据与校正").font = title_font
+        in_headers = list(data['input'][0].keys())
+        write_table(ws4, in_headers, data['input'], start_row=3,
+                    col_widths=[10, 18, 22, 22])
+
+        # ── Sheet 5: 计算日志 ──
+        ws5 = wb.create_sheet("计算日志")
+        ws5.cell(row=1, column=1, value="计算详细日志").font = title_font
+        for ri, line in enumerate(data['log'].split('\n'), 3):
+            ws5.cell(row=ri, column=1, value=line).font = Font(name='Consolas', size=10)
+        ws5.column_dimensions['A'].width = 100
+
+        wb.save(path)
+        QMessageBox.information(self, "导出成功", f"Excel 报告已保存至：\n{path}")
+        self.status_bar.showMessage(f"✓ 已导出 Excel → {os.path.basename(path)}", 5000)
+
+    def _export_csv(self):
+        if not self._check_result():
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出 CSV 结果表", "dose_results.csv", "CSV (*.csv)")
+        if not path:
+            return
+        try:
+            data = self._build_export_data()
+            rows = [['化合物', '气溶胶类型', '核素', 'AMAD/粒径', 'e (Sv/Bq)', '活度贡献 (Bq/m³)', '剂量 (Sv)']]
+            for r in data['dose_rows']:
+                rows.append([
+                    r['compound'], r['aerosol_type'], r['nuclide'],
+                    str(r['amad']),
+                    f"{r['e_val']:.3e}" if not np.isnan(r.get('e_val', np.nan)) else "逐级",
+                    f"{r['act_conc']:.4e}", f"{r['dose']:.4e}",
+                ])
+            # 追加汇总行
+            rows.append([])
+            for k, v in data['summary'].items():
+                rows.append([k, v])
+            import csv
+            with open(path, 'w', newline='', encoding='utf-8-sig') as f:
+                writer = csv.writer(f)
+                writer.writerows(rows)
+            QMessageBox.information(self, "导出成功", f"CSV 已保存至：\n{path}")
+            self.status_bar.showMessage(f"✓ 已导出 CSV → {os.path.basename(path)}", 5000)
+        except Exception as e:
+            QMessageBox.warning(self, "导出失败", f"导出 CSV 时出错：{e}")
+
+    def _export_log(self):
+        if not self._check_result():
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出计算日志", "dose_calc_log.txt", "文本文件 (*.txt)")
+        if not path:
+            return
+        try:
+            data = self._build_export_data()
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write("=" * 60 + "\n")
+                f.write("  空气采样法内照射剂量计算系统 v3.1 — 计算日志\n")
+                f.write(f"  生成时间: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write("=" * 60 + "\n\n")
+                f.write("[ 汇总参数 ]\n")
+                for k, v in data['summary'].items():
+                    f.write(f"  {k}: {v}\n")
+                f.write("\n[ 拟合参数 ]\n")
+                for ft in data['fitting']:
+                    f.write("  " + " | ".join(f"{k}={v}" for k, v in ft.items()) + "\n")
+                f.write("\n" + "-" * 60 + "\n")
+                f.write("[ 详细计算日志 ]\n\n")
+                f.write(data['log'])
+                f.write("\n\n" + "=" * 60 + "\n")
+                f.write("  报告结束\n")
+                f.write("=" * 60 + "\n")
+            QMessageBox.information(self, "导出成功", f"日志已保存至：\n{path}")
+            self.status_bar.showMessage(f"✓ 已导出日志 → {os.path.basename(path)}", 5000)
+        except Exception as e:
+            QMessageBox.warning(self, "导出失败", f"导出日志时出错：{e}")
+
+    def _export_all(self):
+        if not self._check_result():
+            return
+        import datetime
+        dir_path = QFileDialog.getExistingDirectory(self, "选择导出文件夹")
+        if not dir_path:
+            return
+        try:
+            ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            base = os.path.join(dir_path, f"dose_report_{ts}")
+
+            # Excel
+            xlsx_path = base + ".xlsx"
+            self._do_export_xlsx(xlsx_path)
+
+            # CSV
+            csv_path = base + ".csv"
+            self._do_export_csv(csv_path)
+
+            # 日志
+            log_path = base + "_log.txt"
+            self._do_export_log(log_path)
+
+            # 图表
+            fig = self.plot_canvas.fig
+            if fig and len(fig.axes) > 0:
+                png_path = base + ".png"
+                fig.savefig(png_path, dpi=150, bbox_inches='tight')
+
+            files = [xlsx_path, csv_path, log_path]
+            if os.path.exists(base + ".png"):
+                files.append(base + ".png")
+
+            QMessageBox.information(self, "导出成功",
+                                    f"已导出 {len(files)} 个文件至：\n{dir_path}")
+            self.status_bar.showMessage(f"✓ 导出完成 → {dir_path}", 8000)
+
+        except Exception as e:
+            QMessageBox.warning(self, "导出失败", f"导出全部时出错：{e}")
+
+    def _do_export_xlsx(self, path):
+        """内部调用，不弹对话框"""
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+        from openpyxl.utils import get_column_letter
+        data = self._build_export_data()
+        wb = Workbook()
+        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'),
+                             top=Side(style='thin'), bottom=Side(style='thin'))
+        header_fill = PatternFill(start_color='1A5276', end_color='1A5276', fill_type='solid')
+        header_font = Font(name='微软雅黑', bold=True, color='FFFFFF', size=11)
+        title_font  = Font(name='微软雅黑', bold=True, size=14, color='1A5276')
+        cell_font   = Font(name='Consolas', size=10)
+
+        def write_table(ws, headers, rows, start_row=1, col_widths=None):
+            for ci, h in enumerate(headers, 1):
+                c = ws.cell(row=start_row, column=ci, value=h)
+                c.font, c.fill, c.alignment, c.border = header_font, header_fill, Alignment(horizontal='center'), thin_border
+            for ri, row in enumerate(rows):
+                for ci, val in enumerate(row.values() if isinstance(row, dict) else row, 1):
+                    c = ws.cell(row=start_row + 1 + ri, column=ci, value=val)
+                    c.font, c.alignment, c.border = cell_font, Alignment(horizontal='center'), thin_border
+            if col_widths:
+                for ci, w in enumerate(col_widths, 1):
+                    ws.column_dimensions[get_column_letter(ci)].width = w
+
+        ws1 = wb.active; ws1.title = "汇总"
+        ws1.cell(row=1, column=1, value="空气采样法内照射剂量计算报告").font = title_font
+        ws1.merge_cells('A1:B1')
+        for ri, (k, v) in enumerate(data['summary'].items(), 4):
+            ws1.cell(row=ri, column=1, value=k).font = Font(name='微软雅黑', bold=True, size=10)
+            ws1.cell(row=ri, column=2, value=v).font = cell_font
+        ws1.column_dimensions['A'].width = 24; ws1.column_dimensions['B'].width = 32
+
+        ws2 = wb.create_sheet("拟合参数")
+        ws2.cell(row=1, column=1, value="拟合参数与信息准则").font = title_font
+        write_table(ws2, list(data['fitting'][0].keys()), data['fitting'], start_row=3,
+                    col_widths=[18, 16, 14, 12, 12, 12])
+
+        ws3 = wb.create_sheet("剂量明细")
+        dose_headers = ['化合物', '气溶胶类型', '核素', 'AMAD/粒径', 'e (Sv/Bq)', '活度贡献 (Bq/m³)', '剂量 (Sv)']
+        dose_rows = [[r['compound'], r['aerosol_type'], r['nuclide'], str(r['amad']),
+                      f"{r['e_val']:.3e}" if not np.isnan(r.get('e_val', np.nan)) else "逐级",
+                      f"{r['act_conc']:.4e}", f"{r['dose']:.4e}"] for r in data['dose_rows']]
+        write_table(ws3, dose_headers, dose_rows, start_row=3,
+                    col_widths=[14, 22, 12, 20, 14, 20, 16])
+
+        ws4 = wb.create_sheet("输入数据")
+        in_headers = list(data['input'][0].keys())
+        write_table(ws4, in_headers, data['input'], start_row=3, col_widths=[10, 18, 22, 22])
+
+        ws5 = wb.create_sheet("计算日志")
+        for ri, line in enumerate(data['log'].split('\n'), 3):
+            ws5.cell(row=ri, column=1, value=line).font = Font(name='Consolas', size=10)
+        ws5.column_dimensions['A'].width = 100
+        wb.save(path)
+
+    def _do_export_csv(self, path):
+        import csv
+        data = self._build_export_data()
+        rows = [['化合物', '气溶胶类型', '核素', 'AMAD/粒径', 'e (Sv/Bq)', '活度贡献 (Bq/m³)', '剂量 (Sv)']]
+        for r in data['dose_rows']:
+            rows.append([r['compound'], r['aerosol_type'], r['nuclide'], str(r['amad']),
+                         f"{r['e_val']:.3e}" if not np.isnan(r.get('e_val', np.nan)) else "逐级",
+                         f"{r['act_conc']:.4e}", f"{r['dose']:.4e}"])
+        rows.append([])
+        for k, v in data['summary'].items():
+            rows.append([k, v])
+        with open(path, 'w', newline='', encoding='utf-8-sig') as f:
+            csv.writer(f).writerows(rows)
+
+    def _do_export_log(self, path):
+        data = self._build_export_data()
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write("=" * 60 + "\n")
+            f.write("  空气采样法内照射剂量计算系统 v3.1 — 计算日志\n")
+            f.write(f"  生成时间: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("=" * 60 + "\n\n")
+            f.write("[ 汇总参数 ]\n")
+            for k, v in data['summary'].items():
+                f.write(f"  {k}: {v}\n")
+            f.write("\n[ 拟合参数 ]\n")
+            for ft in data['fitting']:
+                f.write("  " + " | ".join(f"{k}={v}" for k, v in ft.items()) + "\n")
+            f.write("\n" + "-" * 60 + "\n")
+            f.write("[ 详细计算日志 ]\n\n")
+            f.write(data['log'])
+            f.write("\n\n" + "=" * 60 + "\n  报告结束\n" + "=" * 60 + "\n")
 
     def _log(self, s):
         self.log_edit.append(s)

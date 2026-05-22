@@ -190,7 +190,188 @@ def fit_linear_probit(activities):
     return D50, GSD, D84, D16, R2
 
 
-# ==================== 9. 自动判断单双峰 ====================
+# ==================== 9. AIC / BIC 信息准则 ====================
+
+def calc_aic_bic(n, k, rss):
+    """
+    计算赤池信息准则 (AIC) 与贝叶斯信息准则 (BIC)
+
+    参数:
+        n:   样本数（数据点个数）
+        k:   模型参数个数
+        rss: 残差平方和
+
+    返回:
+        (aic, bic)
+    """
+    if rss <= 0 or n <= k:
+        return np.inf, np.inf
+    sigma2 = rss / n
+    aic = n * np.log(sigma2) + 2 * k
+    bic = n * np.log(sigma2) + k * np.log(n)
+    return aic, bic
+
+
+def calc_unimodal_stats(amad, gsd, total_act, activities):
+    """
+    单峰模型 AIC/BIC
+
+    参数:
+        amad, gsd, total_act: 拟合参数
+        activities: 效率校正后的 9 级活度
+
+    返回:
+        (aic, bic) 或 (nan, nan)
+    """
+    if np.isnan(amad) or np.isnan(gsd):
+        return np.nan, np.nan
+    pred = unimodal_activities(amad, gsd, total_act, stages_low, stages_high)
+    residuals = activities - pred
+    rss = np.sum(residuals ** 2)
+    n = len(activities)      # 9
+    k = 3                     # AMAD, GSD, total_act
+    return calc_aic_bic(n, k, rss)
+
+
+def calc_bimodal_stats(amad1, gsd1, frac1, amad2, gsd2, total_act, activities):
+    """
+    双峰模型 AIC/BIC
+
+    参数:
+        amad1, gsd1, frac1, amad2, gsd2, total_act: 拟合参数
+        activities: 效率校正后的 9 级活度
+
+    返回:
+        (aic, bic) 或 (nan, nan)
+    """
+    if np.isnan(amad2) or np.isnan(gsd2):
+        return np.nan, np.nan
+    pred = bimodal_activities(amad1, gsd1, frac1, amad2, gsd2,
+                              total_act, stages_low, stages_high)
+    residuals = activities - pred
+    rss = np.sum(residuals ** 2)
+    n = len(activities)      # 9
+    k = 6                     # amad1, gsd1, frac1, amad2, gsd2, total_act
+    return calc_aic_bic(n, k, rss)
+
+
+def calc_probit_stats(activities):
+    """
+    正态概率图法 AIC/BIC（仅用有效数据点）
+
+    参数:
+        activities: 原始 9 级活度
+
+    返回:
+        (D50, GSD, R2, aic, bic, n_valid)
+        若有效数据点不足则返回 (nan, ...)
+    """
+    raw_acts = activities[:8]
+    filter_act = activities[8]
+    total = np.sum(raw_acts) + filter_act
+    if total <= 0:
+        return np.nan, np.nan, np.nan, np.nan, np.nan, 0
+
+    f = raw_acts / total
+    f_all = np.concatenate([f, [filter_act / total]])
+    cum_from_fine = np.cumsum(np.flip(f_all))[:-1]
+    cum_less = np.flip(cum_from_fine) * 100
+    valid = (cum_less > 1) & (cum_less < 99)
+
+    if np.sum(valid) < 3:
+        return np.nan, np.nan, np.nan, np.nan, np.nan, int(np.sum(valid))
+
+    x = np.log(cut_diameters[valid])
+    y = norm.ppf(cum_less[valid] / 100)
+    reg = LinearRegression().fit(x.reshape(-1, 1), y)
+    slope, intercept_ = reg.coef_[0], reg.intercept_
+
+    ln_AMAD = -intercept_ / slope
+    D50 = np.exp(ln_AMAD)
+    ln_GSD = 1 / slope
+    GSD = np.exp(ln_GSD)
+
+    ss_res = np.sum((y - reg.predict(x.reshape(-1, 1))) ** 2)
+    ss_tot = np.sum((y - np.mean(y)) ** 2)
+    R2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0
+
+    n = len(y)               # 有效数据点数
+    k = 2                     # slope, intercept
+    aic, bic = calc_aic_bic(n, k, ss_res)
+
+    return D50, GSD, R2, aic, bic, n
+
+
+# ==================== 10. 数据质量检测 ====================
+
+def count_nonzero_stages(activities, threshold=1e-8):
+    """统计浓度 > threshold 的级数"""
+    acts = np.asarray(activities, dtype=float)
+    return int(np.sum(acts > threshold))
+
+
+def is_low_activity(activities, abs_threshold=0.001, rel_threshold=0.01):
+    """
+    判断是否为低活度（接近本底）数据
+
+    参数:
+        activities:   原始 9 级浓度数组
+        abs_threshold: 绝对阈值 (Bq/m³)，总浓度低于此值视为低活度
+        rel_threshold: 相对阈值，最大单级 / 总活度超过此比例且总活度很小时触发
+
+    返回:
+        (is_low, reason_str)
+    """
+    acts = np.asarray(activities, dtype=float)
+    total = float(np.sum(acts))
+
+    if total < abs_threshold:
+        return True, f"总活度 {total:.2e} Bq/m³ < 绝对阈值 {abs_threshold} Bq/m³"
+
+    max_stage = float(np.max(acts))
+    if total > 0 and max_stage / total > rel_threshold and total < abs_threshold * 10:
+        return True, (f"单级占比过高 ({max_stage/total:.1%}) 且总活度偏低 "
+                      f"({total:.2e} Bq/m³)，数据可能受本底影响")
+
+    return False, ""
+
+
+def data_quality_assessment(activities):
+    """
+    综合数据质量评估
+
+    返回:
+        dict with:
+            n_nonzero:      非零级数
+            n_stages:       总级数 (9)
+            total_activity: 总活度
+            is_low:         是否低活度
+            low_reason:     低活度原因（若触发）
+            quality_flag:   'good' / 'marginal' / 'poor'
+    """
+    acts = np.asarray(activities, dtype=float)
+    total = float(np.sum(acts))
+    n_nonzero = count_nonzero_stages(acts)
+    is_low, low_reason = is_low_activity(acts)
+
+    if is_low or n_nonzero < 4:
+        quality_flag = 'poor'
+    elif n_nonzero < 6:
+        quality_flag = 'marginal'
+    else:
+        quality_flag = 'good'
+
+    return {
+        'n_nonzero': n_nonzero,
+        'n_stages': 9,
+        'total_activity': total,
+        'is_low': is_low,
+        'low_reason': low_reason,
+        'quality_flag': quality_flag,
+    }
+
+
+# ==================== 11. 自动判断单双峰 ====================
 
 def judge_distribution(workshop, amad1, amad2, frac1, linear_R2):
     """
@@ -211,15 +392,42 @@ def judge_distribution(workshop, amad1, amad2, frac1, linear_R2):
         return "Unimodal"
 
 
-# ==================== 10. 自动推荐方法 ====================
+# ==================== 12. 自动推荐方法 ====================
 
-def recommend_method(amad2, ratio_amads, frac1, linear_R2):
+def recommend_method(amad2, ratio_amads, frac1, linear_R2,
+                     aic_uni=None, bic_uni=None,
+                     aic_bi=None, bic_bi=None,
+                     quality_flag='good',
+                     n_nonzero=9):
     """
-    自动推荐：逐级法(Linear) / 单峰(Unimodal) / 双峰(Bimodal)
+    自动推荐计算方法（v2: 加入 AIC/BIC 与数据质量判据）
 
-    规则：物理真实优先 > 拟合优度
+    优先级：
+      ① 数据质量差 (quality_flag='poor') → 强制国标法
+      ② 物理真实双峰 → Bimodal
+      ③ AIC/BIC 信息准则（双峰显著优于单峰时采纳）
+      ④ 正态概率图 R² ≥ 0.85 → Probit
+      ⑤ 其余 → Unimodal
+
+    参数:
+        amad2, ratio_amads, frac1, linear_R2: 原有参数
+        aic_uni, bic_uni: 单峰 AIC/BIC
+        aic_bi, bic_bi:   双峰 AIC/BIC
+        quality_flag:     数据质量标志 ('good' / 'marginal' / 'poor')
+        n_nonzero:        非零级数
+
+    返回:
+        推荐方法字符串
     """
-    # 1. 先判断：是否为真实双峰（最优先）
+    reasons = []
+
+    # ── ① 数据质量强制检查 ──
+    if quality_flag == 'poor':
+        reasons.append(f"数据质量差（非零级数={n_nonzero}/9）")
+        reasons.append("强烈建议使用国标单AMAD法（5 μm）")
+        return "国标单AMAD法 (5 μm) [数据质量不足，强制推荐]"
+
+    # ── ② 物理双峰判断 ──
     is_true_bimodal = False
     if not np.isnan(amad2) and amad2 > 0:
         frac_fine = 1 - frac1
@@ -227,17 +435,48 @@ def recommend_method(amad2, ratio_amads, frac1, linear_R2):
             is_true_bimodal = True
 
     if is_true_bimodal:
+        reasons.append("检测到物理意义明确的粗细双峰")
+        # 用 AIC/BIC 确认
+        if (aic_bi is not None and aic_uni is not None
+                and not np.isnan(aic_bi) and not np.isnan(aic_uni)):
+            delta_aic = aic_uni - aic_bi
+            if delta_aic > 2:
+                reasons.append(f"ΔAIC={delta_aic:.1f}（双峰显著优于单峰）")
+            reasons.append(f"AIC: 单峰={aic_uni:.1f}  双峰={aic_bi:.1f}")
+            reasons.append(f"BIC: 单峰={bic_uni:.1f}  双峰={bic_bi:.1f}")
         return "Bimodal (Recommended)"
 
-    # 2. 不是双峰 → 判断是否能用逐级法
+    # ── ③ AIC/BIC 辅助判断：双峰在统计上是否显著优于单峰 ──
+    favor_bimodal_by_ic = False
+    if (aic_bi is not None and aic_uni is not None
+            and not np.isnan(aic_bi) and not np.isnan(aic_uni)):
+        delta_aic = aic_uni - aic_bi
+        delta_bic = bic_uni - bic_bi if (bic_uni is not None and bic_bi is not None) else 0
+        if delta_aic > 4 and delta_bic > 2:
+            # 双峰在高惩罚下仍显著优于单峰（说明数据确实需要更多参数）
+            favor_bimodal_by_ic = True
+            reasons.append(f"ΔAIC={delta_aic:.1f}  ΔBIC={delta_bic:.1f}（双峰信息准则显著占优）")
+
+    if favor_bimodal_by_ic and not np.isnan(amad2):
+        reasons.append(f"AIC: 单峰={aic_uni:.1f}  双峰={aic_bi:.1f}")
+        reasons.append(f"BIC: 单峰={bic_uni:.1f}  双峰={bic_bi:.1f}")
+        return "Bimodal (Recommended by AIC/BIC)"
+
+    # ── ④ 正态概率图 ──
     if not np.isnan(linear_R2) and linear_R2 >= 0.85:
+        if quality_flag == 'marginal':
+            reasons.append(f"数据质量边际（非零级数={n_nonzero}），但仍可用正态概率图法")
+        reasons.append(f"R²={linear_R2:.4f} ≥ 0.85")
         return "正态概率图法 (Recommended)"
 
-    # 3. 都不行 → 单峰
+    # ── ⑤ 回退单峰 ──
+    reasons.append("未检测到双峰且正态概率图 R² 不足")
+    if aic_uni is not None and not np.isnan(aic_uni):
+        reasons.append(f"单峰 AIC={aic_uni:.1f}  BIC={bic_uni:.1f}")
     return "Unimodal (Recommended)"
 
 
-# ==================== 11. 绘图函数 ====================
+# ==================== 13. 绘图函数 ====================
 
 def plot_fitting_results(workshop, sampling_id, raw_activities, corrected_activities,
                          amad_uni, gsd_uni, total_uni,
@@ -379,7 +618,7 @@ def plot_fitting_results(workshop, sampling_id, raw_activities, corrected_activi
     plt.close()
 
 
-# ==================== 12. 批量处理主函数 ====================
+# ==================== 14. 批量处理主函数 ====================
 
 def process_sampling_data(csv_file):
     """
