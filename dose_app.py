@@ -673,10 +673,17 @@ class DoseCalcApp(QMainWindow):
         right_lay.setContentsMargins(4, 0, 4, 0)
         self._splitter.addWidget(right_panel)
 
-        # 初始比例：左 450, 右 剩余
-        self._splitter.setSizes([450, 990])
+        # 初始比例：左 600，右剩余；两侧均可拖拽但不可折叠
+        self._splitter.setSizes([600, 990])
         self._splitter.setStretchFactor(0, 0)
         self._splitter.setStretchFactor(1, 1)
+        self._splitter.setCollapsible(0, False)
+        self._splitter.setCollapsible(1, False)
+        self._splitter.setHandleWidth(6)        # 拖拽手柄加宽，更易抓取
+        self._splitter.setStyleSheet(
+            "QSplitter::handle { background:#c8d8ea; border-radius:3px; }"
+            "QSplitter::handle:hover { background:#3498db; }"
+        )
 
         # ══════════════════════════════════════════════════════
         # 左侧区域
@@ -825,18 +832,44 @@ class DoseCalcApp(QMainWindow):
         g2.setSpacing(3)
 
         self.rb_std = QRadioButton("方法1 · 国标单AMAD（固定 5 μm）")
-        self.rb_modal = QRadioButton("方法2 · 多模态拟合（单峰/双峰自动判断）")
+        self.rb_modal = QRadioButton("方法2 · 多模态拟合（手动选择峰型）")
         self.rb_probit = QRadioButton("方法3 · 正态概率图法（直线拟合）")
         self.rb_stage = QRadioButton("方法4 · 逐级独立法（每级视为均质源）")
         self.rb_std.setChecked(True)
         bg2 = QButtonGroup(self)
         _hints = {
             self.rb_std:    "  ↳ 使用固定 AMAD = 5 μm，符合 ICRP‑66 及国标。",
-            self.rb_modal:  "  ↳ 对分级数据拟合单峰/双峰对数正态分布，自动推荐最优峰型。",
+            self.rb_modal:  "  ↳ 对分级数据拟合对数正态分布，由您在下方选择单峰或双峰。",
             self.rb_probit: "  ↳ 用累积活度–正态概率图进行直线回归，求 AMAD 与 GSD。",
             self.rb_stage:  "  ↳ 每级视为独立气溶胶源，利用该级中值粒径直接查表后逐级累加。",
         }
         self._hint_lbls = {}
+
+        # ── 方法2 峰型子选项（单峰/双峰，仅当选方法2时可用）──
+        self._modal_peak_widget = QWidget()
+        modal_peak_row = QHBoxLayout(self._modal_peak_widget)
+        modal_peak_row.setContentsMargins(22, 2, 0, 2)
+        modal_peak_row.setSpacing(14)
+        peak_lbl = QLabel("峰型选择：")
+        peak_lbl.setStyleSheet("color:#1a5276; font-size:10px;")
+        self.rb_peak_uni = QRadioButton("单峰（Unimodal）")
+        self.rb_peak_bi  = QRadioButton("双峰（Bimodal）")
+        self.rb_peak_uni.setChecked(True)
+        self.rb_peak_uni.setStyleSheet("font-size:10px;")
+        self.rb_peak_bi.setStyleSheet("font-size:10px;")
+        bg_peak = QButtonGroup(self)
+        bg_peak.addButton(self.rb_peak_uni)
+        bg_peak.addButton(self.rb_peak_bi)
+        peak_ref_lbl = QLabel(
+            "  （拟合图运行后可在右侧查看双峰结果，再决定选哪种）")
+        peak_ref_lbl.setStyleSheet("color:#888; font-size:9px;")
+        modal_peak_row.addWidget(peak_lbl)
+        modal_peak_row.addWidget(self.rb_peak_uni)
+        modal_peak_row.addWidget(self.rb_peak_bi)
+        modal_peak_row.addWidget(peak_ref_lbl)
+        modal_peak_row.addStretch()
+        self._modal_peak_widget.setVisible(False)
+
         for rb, hint in _hints.items():
             bg2.addButton(rb)
             g2.addWidget(rb)
@@ -845,6 +878,9 @@ class DoseCalcApp(QMainWindow):
             hl.setWordWrap(True)
             g2.addWidget(hl)
             self._hint_lbls[rb] = hl
+            # 在方法2后插入峰型子选项
+            if rb is self.rb_modal:
+                g2.addWidget(self._modal_peak_widget)
             rb.toggled.connect(self._update_method_hints)
         self._update_method_hints()
         left_lay.addWidget(grp2)
@@ -958,24 +994,51 @@ class DoseCalcApp(QMainWindow):
         tab_fit = QWidget()
         tfl = QVBoxLayout(tab_fit)
         tfl.setContentsMargins(4, 4, 4, 4)
+        # 内部垂直分割：上方 canvas，下方拟合信息标签（可拖拽）
+        fit_splitter = QSplitter(Qt.Vertical)
+        fit_splitter.setHandleWidth(6)
+        fit_splitter.setStyleSheet(
+            "QSplitter::handle { background:#c8d8ea; border-radius:3px; }"
+            "QSplitter::handle:hover { background:#3498db; }"
+        )
         self.plot_canvas = PlotCanvas(tab_fit, width=7, height=7)
-        tfl.addWidget(self.plot_canvas, 1)
         self.fit_info_lbl = QLabel("拟合参数将在计算后显示")
         self.fit_info_lbl.setStyleSheet(
             "background:#eaf2ff; border:1px solid #aac; padding:6px; border-radius:4px;")
         self.fit_info_lbl.setWordWrap(True)
-        tfl.addWidget(self.fit_info_lbl)
+        self.fit_info_lbl.setMinimumHeight(40)
+        fit_splitter.addWidget(self.plot_canvas)
+        fit_splitter.addWidget(self.fit_info_lbl)
+        fit_splitter.setSizes([560, 80])
+        fit_splitter.setCollapsible(0, False)
+        fit_splitter.setCollapsible(1, False)
+        tfl.addWidget(fit_splitter, 1)
         result_tabs.addTab(tab_fit, "📈 拟合图")
 
         # ── Tab 2: 剂量结果 ──
         tab_dose = QWidget()
         tdl = QVBoxLayout(tab_dose)
         tdl.setContentsMargins(4, 4, 4, 4)
+        tdl.setSpacing(4)
+
+        # 用垂直 splitter 分割"结果表区"与"累计+导出区"
+        dose_splitter = QSplitter(Qt.Vertical)
+        dose_splitter.setHandleWidth(6)
+        dose_splitter.setStyleSheet(
+            "QSplitter::handle { background:#c8d8ea; border-radius:3px; }"
+            "QSplitter::handle:hover { background:#3498db; }"
+        )
+
+        # ── 上半：汇总标签 + 结果明细表 ──
+        top_dose_widget = QWidget()
+        top_dose_lay = QVBoxLayout(top_dose_widget)
+        top_dose_lay.setContentsMargins(0, 0, 0, 0)
+        top_dose_lay.setSpacing(4)
         self.summary_lbl = QLabel("剂量结果将在计算后显示")
         self.summary_lbl.setStyleSheet(
             "background:#eafaf1; border:1px solid #aad; padding:8px; font-size:13px; border-radius:4px;")
         self.summary_lbl.setWordWrap(True)
-        tdl.addWidget(self.summary_lbl)
+        top_dose_lay.addWidget(self.summary_lbl)
 
         self.result_table = QTableWidget(0, 7)
         self.result_table.setHorizontalHeaderLabels(
@@ -983,14 +1046,21 @@ class DoseCalcApp(QMainWindow):
         self.result_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.result_table.setAlternatingRowColors(True)
         self.result_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        tdl.addWidget(self.result_table, 1)
+        top_dose_lay.addWidget(self.result_table, 1)
+        dose_splitter.addWidget(top_dose_widget)
+
+        # ── 下半：累计表 + 导出按钮 ──
+        bot_dose_widget = QWidget()
+        bot_dose_lay = QVBoxLayout(bot_dose_widget)
+        bot_dose_lay.setContentsMargins(0, 0, 0, 0)
+        bot_dose_lay.setSpacing(4)
 
         accum_lbl_hdr = QLabel("累计剂量列表（可多次计算叠加）")
         accum_lbl_hdr.setFont(QFont("微软雅黑", 10, QFont.Bold))
-        tdl.addWidget(accum_lbl_hdr)
+        bot_dose_lay.addWidget(accum_lbl_hdr)
         self.accum_total_lbl = QLabel("")
         self.accum_total_lbl.setStyleSheet("color:#1a5276; font-weight:bold;")
-        tdl.addWidget(self.accum_total_lbl)
+        bot_dose_lay.addWidget(self.accum_total_lbl)
 
         self.accum_table = QTableWidget(0, 5)
         self.accum_table.setHorizontalHeaderLabels(
@@ -998,8 +1068,7 @@ class DoseCalcApp(QMainWindow):
         self.accum_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.accum_table.setAlternatingRowColors(True)
         self.accum_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.accum_table.setMaximumHeight(150)
-        tdl.addWidget(self.accum_table)
+        bot_dose_lay.addWidget(self.accum_table, 1)
 
         accum_btn_row = QHBoxLayout()
         btn_add_accum = QPushButton("➕ 将本次结果加入累计")
@@ -1009,7 +1078,7 @@ class DoseCalcApp(QMainWindow):
         accum_btn_row.addWidget(btn_add_accum)
         accum_btn_row.addWidget(btn_clear_accum)
         accum_btn_row.addStretch()
-        tdl.addLayout(accum_btn_row)
+        bot_dose_lay.addLayout(accum_btn_row)
 
         # ─ ⑤ 导出结果 ─
         grp_export = QGroupBox("⑤ 导出结果")
@@ -1050,7 +1119,14 @@ class DoseCalcApp(QMainWindow):
         exp_lay.addWidget(self.btn_export_log)
         exp_lay.addWidget(self.btn_export_all)
         exp_lay.addStretch()
-        tdl.addWidget(grp_export)
+        bot_dose_lay.addWidget(grp_export)
+
+        dose_splitter.addWidget(bot_dose_widget)
+        dose_splitter.setSizes([320, 250])
+        dose_splitter.setCollapsible(0, False)
+        dose_splitter.setCollapsible(1, False)
+
+        tdl.addWidget(dose_splitter, 1)
         result_tabs.addTab(tab_dose, "💊 剂量结果")
 
         # ── Tab 3: 计算日志 ──
@@ -1215,7 +1291,6 @@ class DoseCalcApp(QMainWindow):
         self.mask_info_lbl.setText(f"过滤效率 {eff:.0%}  泄漏率 {leak:.0%}")
 
     def _update_method_hints(self):
-        selected_rbs = [r for r in self._hint_lbls if r.isChecked()]
         for rb, hl in self._hint_lbls.items():
             if rb.isChecked():
                 hl.setStyleSheet(
@@ -1223,6 +1298,8 @@ class DoseCalcApp(QMainWindow):
             else:
                 hl.setStyleSheet(
                     "color:#999; font-size:10px; margin-left:16px;")
+        # 峰型子选项：仅多模态法激活时显示
+        self._modal_peak_widget.setVisible(self.rb_modal.isChecked())
 
     # ─────────────────────────────────────────────────────────
     # 手动拟合（选好数据后点击「运行拟合」按钮触发）
@@ -1345,17 +1422,19 @@ class DoseCalcApp(QMainWindow):
         method = ('std' if self.rb_std.isChecked() else
                   'modal' if self.rb_modal.isChecked() else
                   'probit' if self.rb_probit.isChecked() else 'stage')
+        # 多模态法峰型：由用户手动选择（单峰/双峰）
+        user_peak = 'bimodal' if self.rb_peak_bi.isChecked() else 'unimodal'
 
         self._calc_thread = CalcThread(
             self._do_calc,
             raw_concs, mask_type, br, work_hours,
-            compounds_data, method, nucs_elem
+            compounds_data, method, nucs_elem, user_peak
         )
         self._calc_thread.result_ready.connect(self._on_result)
         self._calc_thread.error_signal.connect(self._on_error)
         self._calc_thread.start()
 
-    def _do_calc(self, raw_concs, mask_type, br, work_hours, compounds_data, method, nucs_elem):
+    def _do_calc(self, raw_concs, mask_type, br, work_hours, compounds_data, method, nucs_elem, user_peak='unimodal'):
         log_lines = []
         def log(s): log_lines.append(s)
 
@@ -1421,13 +1500,15 @@ class DoseCalcApp(QMainWindow):
                 quality_flag=quality['quality_flag'],
                 n_nonzero=quality['n_nonzero'],
             )
-            log(f"推荐方法: {recommended}")
+            log(f"参考推荐方法（仅供参考，实际使用用户选定峰型）: {recommended}")
+            log(f"用户选定峰型: {'双峰' if user_peak == 'bimodal' else '单峰'}")
 
             D50_pb, GSD_pb, R2_pb, aic_pb, bic_pb, n_pb = calc_probit_stats(
                 corrected_concs)
 
             fit_res = {
                 'method': 'modal', 'recommended': recommended,
+                'user_peak': user_peak,
                 'amad_uni': amad_uni, 'gsd_uni': gsd_uni, 'total_uni': total_uni,
                 'amad1': amad1, 'gsd1': gsd1, 'frac1': frac1,
                 'amad2': amad2, 'gsd2': gsd2,
@@ -1437,18 +1518,20 @@ class DoseCalcApp(QMainWindow):
                 'aic_probit': aic_pb, 'bic_probit': bic_pb, 'n_probit': n_pb,
                 'quality': quality,
             }
-            if 'Bimodal' in recommended:
+            # 用用户选定的峰型决定 amad/gsd，不自动判断
+            if user_peak == 'bimodal' and not np.isnan(amad2):
                 fit_res['amad'] = amad1
                 fit_res['gsd'] = gsd1
-            elif '正态概率' in recommended and not np.isnan(D50_lin):
-                fit_res['amad'] = D50_lin
-                fit_res['gsd'] = GSD_lin
-            elif '国标' in recommended:
-                fit_res['amad'] = 5.0
-                fit_res['gsd'] = 1.5
-            else:
+                log(f"  [双峰模式] 使用粗峰 AMAD={amad1:.3f} μm 作为代表粒径")
+            elif user_peak == 'bimodal' and np.isnan(amad2):
+                log("  [警告] 用户选择双峰但拟合未检测到双峰，回退使用单峰 AMAD")
                 fit_res['amad'] = amad_uni
                 fit_res['gsd'] = gsd_uni
+            else:
+                # 单峰模式
+                fit_res['amad'] = amad_uni
+                fit_res['gsd'] = gsd_uni
+                log(f"  [单峰模式] 使用单峰 AMAD={amad_uni:.3f} μm")
 
         elif method == 'probit':
             D50_lin, GSD_lin, D84_lin, D16_lin, R2_lin = fit_linear_probit(
@@ -1551,7 +1634,7 @@ class DoseCalcApp(QMainWindow):
                     })
                     total_dose += dose_nuc
 
-                elif method == 'modal' and 'Bimodal' in fit_res.get('recommended', ''):
+                elif method == 'modal' and fit_res.get('user_peak') == 'bimodal' and not np.isnan(fit_res.get('amad2', np.nan)):
                     amad1 = fit_res['amad1']
                     gsd1 = fit_res['gsd1']
                     frac1 = fit_res['frac1']
@@ -1680,7 +1763,14 @@ class DoseCalcApp(QMainWindow):
 
         # 拟合参数信息
         rec = fit.get('recommended', '')
-        parts = [f"【推荐/使用方法】{rec}"]
+        user_peak = fit.get('user_peak', '')
+        peak_label = ''
+        if res['method'] == 'modal':
+            if user_peak == 'bimodal':
+                peak_label = '【双峰模式（用户选定）】'
+            else:
+                peak_label = '【单峰模式（用户选定）】'
+        parts = [f"【推荐/参考方法】{rec}  {peak_label}"]
         amad_uni = fit.get('amad_uni', 5)
         parts.append(f"单峰 AMAD={amad_uni:.3f} \u03bcm  GSD={fit.get('gsd_uni', 1.5):.3f}"
                      f"  AIC={fit.get('aic_uni', np.nan):.1f}  BIC={fit.get('bic_uni', np.nan):.1f}")
@@ -1717,8 +1807,13 @@ class DoseCalcApp(QMainWindow):
         # 汇总标签
         td = res['total_dose']
         pf = res['mask_pf_overall']
-        mn = {'std': '国标单AMAD法', 'modal': '多模态拟合法',
-              'probit': '正态概率图法', 'stage': '逐级独立法'}.get(res['method'], res['method'])
+        mn_base = {'std': '国标单AMAD法', 'modal': '多模态拟合法',
+                   'probit': '正态概率图法', 'stage': '逐级独立法'}.get(res['method'], res['method'])
+        if res['method'] == 'modal':
+            peak_suffix = '（双峰）' if fit.get('user_peak') == 'bimodal' else '（单峰）'
+            mn = mn_base + peak_suffix
+        else:
+            mn = mn_base
         self.summary_lbl.setText(
             f"【{mn}】  总有效剂量 = {td:.4e} Sv"
             f"  |  口罩防护因子 = {pf:.4f}"
