@@ -47,6 +47,17 @@ matplotlib.rcParams['mathtext.fontset'] = 'stix'  # 数学符号用 STIX，兼�
 
 warnings.filterwarnings('ignore')
 
+
+# ==================== 路径辅助（兼容开发/PyInstaller 打包）====================
+def resource_path(relative_path):
+    """返回资源文件的绝对路径，兼容开发环境和 PyInstaller 打包"""
+    if hasattr(sys, '_MEIPASS'):
+        base = sys._MEIPASS
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, relative_path)
+
+
 # ==================== 导入核心计算模块 ====================
 try:
     from xf_core import (lognormal_pdf, stage_integral, fit_unimodal, fit_bimodal,
@@ -60,7 +71,7 @@ except ImportError as e:
     sys.exit(1)
 
 # ==================== 全局常量 ====================
-DATA_DIR = Path("./processed_nuclide_files")
+DATA_DIR = Path(resource_path("processed_nuclide_files"))
 STAGE_NAMES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'Filter']
 STAGE_RANGES = ['14.8–21.3 μm', '9.8–14.8 μm', '6.0–9.8 μm', '3.5–6.0 μm',
                 '1.6–3.5 μm',  '0.9–1.6 μm',  '0.5–0.9 μm', '0.1–0.5 μm', '< 0.1 μm']
