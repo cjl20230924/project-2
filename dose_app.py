@@ -624,7 +624,8 @@ class DoseCalcApp(QMainWindow):
         self.setMinimumSize(1100, 700)
         self.resize(1440, 860)
 
-        self._fit_result = None
+        self._fit_result = None        # 当前最新一次计算结果
+        self._calc_history = []        # 全部计算历史（累积）
         self._calc_thread = None
         self._file_df = None
 
@@ -1738,28 +1739,16 @@ class DoseCalcApp(QMainWindow):
         }
 
     def _on_result(self, res):
+        # ── 保存结果：追加到历史列表，同时更新当前最新结果 ──
         self._fit_result = res
+        self._calc_history.append(res)
         fit = res['fit_res']
 
         # 日志
         self.log_edit.setPlainText(res['log'])
 
-        # 拟合图（计算结果使用防护后校正数据绘制）
-        try:
-            self.plot_canvas.plot_fitting(
-                res['raw_concs'], res['eff_corr'],
-                fit.get('amad_uni', 5.0), fit.get(
-                    'gsd_uni', 1.5), fit.get('total_uni', 1.0),
-                fit.get('amad1', 5.0), fit.get(
-                    'gsd1', 1.5), fit.get('frac1', 1.0),
-                fit.get('amad2', np.nan), fit.get('gsd2', np.nan),
-                fit.get('total_uni', 1.0), res['total_corr'],
-                fit.get('D50_lin', np.nan), fit.get(
-                    'GSD_lin', np.nan), fit.get('R2_lin', np.nan),
-                is_corrected=True
-            )
-        except Exception as e:
-            self._log(f"[图] 绘图失败: {e}")
+        # ★ 注意：计算完成后【不重绘】拟合图。
+        #   粒径分布图由「运行拟合」按钮独立控制，切换计算方法不影响图表。
 
         # 拟合参数信息
         rec = fit.get('recommended', '')
@@ -1835,6 +1824,8 @@ class DoseCalcApp(QMainWindow):
         self.log_edit.clear()
         self.plot_canvas.fig.clear()
         self.plot_canvas.draw()
+        self._fit_result = None
+        self._calc_history.clear()
 
     def _add_to_accum(self):
         if self._fit_result is None:
@@ -1873,13 +1864,21 @@ class DoseCalcApp(QMainWindow):
         return True
 
     def _build_export_data(self):
-        """构建包含所有计算信息的字典，供各导出格式共用"""
-        res = self._fit_result
+        """构建包含所有计算历史的字典，供各导出格式共用。
+        每次计算都作为一条独立记录，汇总至各 Sheet/段落。
+        """
+        # ── 如果没有历史则用当前结果兜底 ──
+        history = self._calc_history if self._calc_history else ([self._fit_result] if self._fit_result else [])
+
+        mn_map = {'std': '国标单AMAD法', 'modal': '多模态拟合法',
+                  'probit': '正态概率图法', 'stage': '逐级独立法'}
+
+        # ─ 最新一次的原始结果作为"当前汇总" ─
+        res = history[-1]
         fit = res['fit_res']
         q = fit.get('quality', {})
-
-        # ─ 输入参数 ─
         raw_concs = res['raw_concs']
+
         input_table = []
         for i, (name, rng) in enumerate(zip(STAGE_NAMES, STAGE_RANGES)):
             input_table.append({
@@ -1888,7 +1887,7 @@ class DoseCalcApp(QMainWindow):
                 '校正后浓度 (Bq/m³)': f"{res['corrected_concs'][i]:.6e}",
             })
 
-        # ─ 拟合结果 ─
+        # ─ 汇总拟合参数（取最新一次，包含各方法结果）─
         fitting_table = []
         fitting_table.append({'方法': '单峰对数正态', 'AMAD (μm)': f"{fit.get('amad_uni', 0):.3f}",
                               'GSD': f"{fit.get('gsd_uni', 0):.3f}",
@@ -1911,32 +1910,56 @@ class DoseCalcApp(QMainWindow):
                                   'AIC': f"{fit.get('aic_probit', np.nan):.1f}",
                                   'BIC': f"{fit.get('bic_probit', np.nan):.1f}"})
 
-        # ─ 剂量明细 ─
-        dose_rows = res['detail_rows']
+        # ─ 全部历史剂量明细（带计算批次序号和方法标记）─
+        dose_rows_all = []
+        all_logs = []
+        for idx, r in enumerate(history, 1):
+            method_label = mn_map.get(r['method'], r['method'])
+            if r['method'] == 'modal':
+                peak_suffix = '（双峰）' if r['fit_res'].get('user_peak') == 'bimodal' else '（单峰）'
+                method_label += peak_suffix
+            for dr in r['detail_rows']:
+                row_copy = dict(dr)
+                row_copy['_calc_no'] = idx
+                row_copy['_method'] = method_label
+                row_copy['_mask'] = r['mask_type']
+                row_copy['_total_dose'] = r['total_dose']
+                dose_rows_all.append(row_copy)
+            all_logs.append(f"\n{'='*60}\n  第 {idx} 次计算  方法: {method_label}\n{'='*60}\n{r['log']}")
 
-        # ─ 汇总 ─
-        mn_map = {'std': '国标单AMAD法', 'modal': '多模态拟合法',
-                  'probit': '正态概率图法', 'stage': '逐级独立法'}
-        summary = {
-            '计算方法': mn_map.get(res['method'], res['method']),
-            '推荐方法': fit.get('recommended', ''),
-            '口罩型号': res['mask_type'],
-            '总防护因子': f"{res['mask_pf_overall']:.6f}",
-            '原始总浓度 (Bq/m³)': f"{res['total_raw']:.4e}",
-            '校正后总浓度 (Bq/m³)': f"{res['total_masked']:.4e}",
-            '总有效剂量 (Sv)': f"{res['total_dose']:.4e}",
-            '呼吸速率 (m³/h)': f"{res['br']:.2f}",
-            '工作时长 (h)': f"{res['work_hours']:.1f}",
-            '数据质量': q.get('quality_flag', '?'),
-            '非零级数': f"{q.get('n_nonzero', '?')}/9",
-        }
+        # ─ 每次计算的汇总摘要 ─
+        summaries = []
+        for idx, r in enumerate(history, 1):
+            method_label = mn_map.get(r['method'], r['method'])
+            if r['method'] == 'modal':
+                peak_suffix = '（双峰）' if r['fit_res'].get('user_peak') == 'bimodal' else '（单峰）'
+                method_label += peak_suffix
+            fq = r['fit_res'].get('quality', {})
+            summaries.append({
+                '计算序号': str(idx),
+                '计算方法': method_label,
+                '推荐方法': r['fit_res'].get('recommended', ''),
+                '口罩型号': r['mask_type'],
+                '总防护因子': f"{r['mask_pf_overall']:.6f}",
+                '原始总浓度 (Bq/m³)': f"{r['total_raw']:.4e}",
+                '校正后总浓度 (Bq/m³)': f"{r['total_masked']:.4e}",
+                '总有效剂量 (Sv)': f"{r['total_dose']:.4e}",
+                '呼吸速率 (m³/h)': f"{r['br']:.2f}",
+                '工作时长 (h)': f"{r['work_hours']:.1f}",
+                '数据质量': fq.get('quality_flag', '?'),
+                '非零级数': f"{fq.get('n_nonzero', '?')}/9",
+            })
+
+        # 保留旧版兼容：summary 取最新一次
+        summary = summaries[-1] if summaries else {}
 
         return {
             'input': input_table,
             'fitting': fitting_table,
-            'dose_rows': dose_rows,
-            'summary': summary,
-            'log': res['log'],
+            'dose_rows': dose_rows_all,      # 所有历史明细（含 _calc_no/_method/_mask）
+            'summaries': summaries,           # 每次计算摘要列表
+            'summary': summary,              # 兼容旧版（最新一次）
+            'log': '\n'.join(all_logs),      # 所有历史日志合并
         }
 
     def _export_xlsx(self):
@@ -1982,21 +2005,22 @@ class DoseCalcApp(QMainWindow):
                 for ci, w in enumerate(col_widths, 1):
                     ws.column_dimensions[get_column_letter(ci)].width = w
 
-        # ── Sheet 1: 汇总 ──
+        # ── Sheet 1: 各次计算汇总 ──
         ws1 = wb.active
-        ws1.title = "汇总"
+        ws1.title = "各次计算汇总"
         ws1.cell(row=1, column=1, value="空气采样法内照射剂量计算报告").font = title_font
         ws1.merge_cells('A1:B1')
         ws1.cell(row=2, column=1, value=f"生成时间: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}").font = Font(
             name='微软雅黑', size=10, color='666666')
-        for ri, (k, v) in enumerate(data['summary'].items(), 4):
-            ws1.cell(row=ri, column=1, value=k).font = Font(
-                name='微软雅黑', bold=True, size=10)
-            ws1.cell(row=ri, column=2, value=v).font = cell_font
-            if k == '数据质量' and 'poor' in str(v).lower():
-                ws1.cell(row=ri, column=2).font = warn_font
-        ws1.column_dimensions['A'].width = 24
-        ws1.column_dimensions['B'].width = 32
+        if data['summaries']:
+            summary_headers = list(data['summaries'][0].keys())
+            write_table(ws1, summary_headers, data['summaries'], start_row=4,
+                        col_widths=[10, 20, 20, 12, 14, 20, 20, 18, 14, 12, 12, 12])
+            # 高亮数据质量差的行
+            for ri, s in enumerate(data['summaries']):
+                if 'poor' in str(s.get('数据质量', '')).lower():
+                    for ci in range(1, len(summary_headers) + 1):
+                        ws1.cell(row=5 + ri, column=ci).font = warn_font
 
         # ── Sheet 2: 拟合参数 ──
         ws2 = wb.create_sheet("拟合参数")
@@ -2004,20 +2028,22 @@ class DoseCalcApp(QMainWindow):
         write_table(ws2, list(data['fitting'][0].keys()), data['fitting'], start_row=3,
                     col_widths=[18, 16, 14, 12, 12, 12])
 
-        # ── Sheet 3: 剂量明细 ──
+        # ── Sheet 3: 剂量明细（含全部历史）──
         ws3 = wb.create_sheet("剂量明细")
-        ws3.cell(row=1, column=1, value="逐核素剂量明细").font = title_font
-        dose_headers = ['化合物', '气溶胶类型', '核素', 'AMAD/粒径',
+        ws3.cell(row=1, column=1, value="逐核素剂量明细（全部计算历史）").font = title_font
+        dose_headers = ['计算序号', '计算方法', '口罩型号', '化合物', '气溶胶类型', '核素', 'AMAD/粒径',
                         'e (Sv/Bq)', '活度贡献 (Bq/m³)', '剂量 (Sv)']
         dose_rows = [[
+            str(r.get('_calc_no', '')),
+            r.get('_method', ''),
+            r.get('_mask', ''),
             r['compound'], r['aerosol_type'], r['nuclide'],
             str(r['amad']),
-            f"{r['e_val']:.3e}" if not np.isnan(
-                r.get('e_val', np.nan)) else "逐级",
+            f"{r['e_val']:.3e}" if not np.isnan(r.get('e_val', np.nan)) else "逐级",
             f"{r['act_conc']:.4e}", f"{r['dose']:.4e}",
         ] for r in data['dose_rows']]
         write_table(ws3, dose_headers, dose_rows, start_row=3,
-                    col_widths=[14, 22, 12, 20, 14, 20, 16])
+                    col_widths=[10, 18, 12, 14, 22, 12, 20, 14, 20, 16])
 
         # ── Sheet 4: 输入数据 ──
         ws4 = wb.create_sheet("输入数据")
@@ -2048,20 +2074,25 @@ class DoseCalcApp(QMainWindow):
             return
         try:
             data = self._build_export_data()
-            rows = [['化合物', '气溶胶类型', '核素', 'AMAD/粒径',
+            rows = [['计算序号', '计算方法', '口罩型号', '化合物', '气溶胶类型', '核素', 'AMAD/粒径',
                      'e (Sv/Bq)', '活度贡献 (Bq/m³)', '剂量 (Sv)']]
             for r in data['dose_rows']:
                 rows.append([
+                    str(r.get('_calc_no', '')),
+                    r.get('_method', ''),
+                    r.get('_mask', ''),
                     r['compound'], r['aerosol_type'], r['nuclide'],
                     str(r['amad']),
-                    f"{r['e_val']:.3e}" if not np.isnan(
-                        r.get('e_val', np.nan)) else "逐级",
+                    f"{r['e_val']:.3e}" if not np.isnan(r.get('e_val', np.nan)) else "逐级",
                     f"{r['act_conc']:.4e}", f"{r['dose']:.4e}",
                 ])
-            # 追加汇总行
+            # 追加各次汇总
             rows.append([])
-            for k, v in data['summary'].items():
-                rows.append([k, v])
+            rows.append(['── 各次计算汇总 ──'])
+            if data['summaries']:
+                rows.append(list(data['summaries'][0].keys()))
+                for s in data['summaries']:
+                    rows.append(list(s.values()))
             import csv
             with open(path, 'w', newline='', encoding='utf-8-sig') as f:
                 writer = csv.writer(f)
@@ -2176,15 +2207,13 @@ class DoseCalcApp(QMainWindow):
                     ws.column_dimensions[get_column_letter(ci)].width = w
 
         ws1 = wb.active
-        ws1.title = "汇总"
+        ws1.title = "各次计算汇总"
         ws1.cell(row=1, column=1, value="空气采样法内照射剂量计算报告").font = title_font
         ws1.merge_cells('A1:B1')
-        for ri, (k, v) in enumerate(data['summary'].items(), 4):
-            ws1.cell(row=ri, column=1, value=k).font = Font(
-                name='微软雅黑', bold=True, size=10)
-            ws1.cell(row=ri, column=2, value=v).font = cell_font
-        ws1.column_dimensions['A'].width = 24
-        ws1.column_dimensions['B'].width = 32
+        if data['summaries']:
+            summary_headers = list(data['summaries'][0].keys())
+            write_table(ws1, summary_headers, data['summaries'], start_row=3,
+                        col_widths=[10, 20, 20, 12, 14, 20, 20, 18, 14, 12, 12, 12])
 
         ws2 = wb.create_sheet("拟合参数")
         ws2.cell(row=1, column=1, value="拟合参数与信息准则").font = title_font
@@ -2192,14 +2221,17 @@ class DoseCalcApp(QMainWindow):
                     col_widths=[18, 16, 14, 12, 12, 12])
 
         ws3 = wb.create_sheet("剂量明细")
-        dose_headers = ['化合物', '气溶胶类型', '核素', 'AMAD/粒径',
+        dose_headers = ['计算序号', '计算方法', '口罩型号', '化合物', '气溶胶类型', '核素', 'AMAD/粒径',
                         'e (Sv/Bq)', '活度贡献 (Bq/m³)', '剂量 (Sv)']
-        dose_rows = [[r['compound'], r['aerosol_type'], r['nuclide'], str(r['amad']),
-                      f"{r['e_val']:.3e}" if not np.isnan(
-                          r.get('e_val', np.nan)) else "逐级",
-                      f"{r['act_conc']:.4e}", f"{r['dose']:.4e}"] for r in data['dose_rows']]
+        dose_rows = [[
+            str(r.get('_calc_no', '')),
+            r.get('_method', ''),
+            r.get('_mask', ''),
+            r['compound'], r['aerosol_type'], r['nuclide'], str(r['amad']),
+            f"{r['e_val']:.3e}" if not np.isnan(r.get('e_val', np.nan)) else "逐级",
+            f"{r['act_conc']:.4e}", f"{r['dose']:.4e}"] for r in data['dose_rows']]
         write_table(ws3, dose_headers, dose_rows, start_row=3,
-                    col_widths=[14, 22, 12, 20, 14, 20, 16])
+                    col_widths=[10, 18, 12, 14, 22, 12, 20, 14, 20, 16])
 
         ws4 = wb.create_sheet("输入数据")
         in_headers = list(data['input'][0].keys())
@@ -2216,16 +2248,23 @@ class DoseCalcApp(QMainWindow):
     def _do_export_csv(self, path):
         import csv
         data = self._build_export_data()
-        rows = [['化合物', '气溶胶类型', '核素', 'AMAD/粒径',
+        rows = [['计算序号', '计算方法', '口罩型号', '化合物', '气溶胶类型', '核素', 'AMAD/粒径',
                  'e (Sv/Bq)', '活度贡献 (Bq/m³)', '剂量 (Sv)']]
         for r in data['dose_rows']:
-            rows.append([r['compound'], r['aerosol_type'], r['nuclide'], str(r['amad']),
-                         f"{r['e_val']:.3e}" if not np.isnan(
-                             r.get('e_val', np.nan)) else "逐级",
-                         f"{r['act_conc']:.4e}", f"{r['dose']:.4e}"])
+            rows.append([
+                str(r.get('_calc_no', '')),
+                r.get('_method', ''),
+                r.get('_mask', ''),
+                r['compound'], r['aerosol_type'], r['nuclide'],
+                str(r['amad']),
+                f"{r['e_val']:.3e}" if not np.isnan(r.get('e_val', np.nan)) else "逐级",
+                f"{r['act_conc']:.4e}", f"{r['dose']:.4e}"])
         rows.append([])
-        for k, v in data['summary'].items():
-            rows.append([k, v])
+        rows.append(['── 各次计算汇总 ──'])
+        if data['summaries']:
+            rows.append(list(data['summaries'][0].keys()))
+            for s in data['summaries']:
+                rows.append(list(s.values()))
         with open(path, 'w', newline='', encoding='utf-8-sig') as f:
             csv.writer(f).writerows(rows)
 
