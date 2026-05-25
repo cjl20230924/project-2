@@ -1084,10 +1084,13 @@ class DoseCalcApp(QMainWindow):
 
         accum_btn_row = QHBoxLayout()
         btn_add_accum = QPushButton("➕ 将本次结果加入累计")
+        btn_del_accum = QPushButton("➖ 删除选中行")
         btn_clear_accum = QPushButton("🗑 清空累计")
         btn_add_accum.clicked.connect(self._add_to_accum)
+        btn_del_accum.clicked.connect(self._del_accum_row)
         btn_clear_accum.clicked.connect(self._clear_accum)
         accum_btn_row.addWidget(btn_add_accum)
+        accum_btn_row.addWidget(btn_del_accum)
         accum_btn_row.addWidget(btn_clear_accum)
         accum_btn_row.addStretch()
         bot_dose_lay.addLayout(accum_btn_row)
@@ -1863,6 +1866,26 @@ class DoseCalcApp(QMainWindow):
             for i in range(self.accum_table.rowCount())
         )
         self.accum_total_lbl.setText(f"累计总剂量 = {total_accum:.4e} Sv")
+
+    def _del_accum_row(self):
+        """删除累计表中当前选中的行，并重新汇总总剂量"""
+        selected = self.accum_table.selectedItems()
+        if not selected:
+            QMessageBox.information(self, "提示", "请先选中要删除的行")
+            return
+        rows = sorted({item.row() for item in selected}, reverse=True)
+        for r in rows:
+            self.accum_table.removeRow(r)
+        # 重算总剂量
+        n = self.accum_table.rowCount()
+        if n == 0:
+            self.accum_total_lbl.setText("")
+        else:
+            total_accum = sum(
+                float(self.accum_table.item(i, 4).text())
+                for i in range(n)
+            )
+            self.accum_total_lbl.setText(f"累计总剂量 = {total_accum:.4e} Sv")
 
     def _clear_accum(self):
         self.accum_table.setRowCount(0)
