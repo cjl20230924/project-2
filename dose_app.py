@@ -1648,53 +1648,56 @@ class DoseCalcApp(QMainWindow):
 
                 elif method == 'modal' and fit_res.get('user_peak') == 'bimodal' and not np.isnan(fit_res.get('amad2', np.nan)):
                     amad1 = fit_res['amad1']
-                    gsd1 = fit_res['gsd1']
+                    gsd1  = fit_res['gsd1']
                     frac1 = fit_res['frac1']
                     amad2 = fit_res['amad2']
-                    frac2 = 1 - frac1
+                    gsd2  = fit_res['gsd2']
+                    frac2 = 1.0 - frac1
 
-                    pk1_integ = np.array([
-                        stage_integral(
-                            amad1, gsd1, stages_low[i], stages_high[i])
-                        for i in range(len(STAGE_NAMES))
-                    ])
-                    pk2_integ = np.array([
-                        stage_integral(
-                            amad2, fit_res['gsd2'], stages_low[i], stages_high[i])
-                        for i in range(len(STAGE_NAMES))
-                    ])
-                    s1 = float(np.sum(pk1_integ))
-                    s2 = float(np.sum(pk2_integ))
-                    sh1 = pk1_integ / \
-                        s1 if s1 > 0 else np.ones(
-                            len(STAGE_NAMES)) / len(STAGE_NAMES)
-                    sh2 = pk2_integ / \
-                        s2 if s2 > 0 else np.ones(
-                            len(STAGE_NAMES)) / len(STAGE_NAMES)
+                    # ── 逐级按粒径分配两峰活度 ──────────────────────────────
+                    # 对每级中值粒径 d_i，计算该级内两峰的权重：
+                    #   pdf1_i = frac1 * lognormal_pdf(d_i, AMAD1, GSD1)
+                    #   pdf2_i = frac2 * lognormal_pdf(d_i, AMAD2, GSD2)
+                    #   w1_i   = pdf1_i / (pdf1_i + pdf2_i)   # 峰1在该级的占比
+                    #   w2_i   = 1 - w1_i
+                    # 然后 C1_i = w1_i * C_i（口罩校正后该级活度浓度）
+                    #      C2_i = w2_i * C_i
+                    pdf1 = np.array([frac1 * lognormal_pdf(dp, amad1, gsd1)
+                                     for dp in midpoints], dtype=float)
+                    pdf2 = np.array([frac2 * lognormal_pdf(dp, amad2, gsd2)
+                                     for dp in midpoints], dtype=float)
+                    pdf_sum = pdf1 + pdf2
+                    # 避免除零（两峰在该级都为零时平分）
+                    w1 = np.where(pdf_sum > 0, pdf1 / pdf_sum, 0.5)
+                    w2 = 1.0 - w1
 
-                    c1 = float(np.sum(corrected_concs * sh1)) * \
-                        frac1 * act_frac * abundance
-                    c2 = float(np.sum(corrected_concs * sh2)) * \
-                        frac2 * act_frac * abundance
+                    # 各核素在各级的活度浓度 = 口罩校正后浓度 × 核素活度分数
+                    stage_concs = corrected_concs * act_frac * abundance  # shape (n_stage,)
+
+                    # 两峰各级活度汇总
+                    C1_total = float(np.sum(w1 * stage_concs))  # 峰1总活度浓度贡献
+                    C2_total = float(np.sum(w2 * stage_concs))  # 峰2总活度浓度贡献
 
                     e1 = interp_dose_coeff(sub, effective_aerosol, amad1) or interp_dose_coeff(
                         sub, 'Unspecified', amad1)
                     e2 = interp_dose_coeff(sub, effective_aerosol, amad2) or interp_dose_coeff(
                         sub, 'Unspecified', amad2)
 
-                    d1 = (e1 * c1 * br * work_hours) if e1 else 0.0
-                    d2 = (e2 * c2 * br * work_hours) if e2 else 0.0
+                    d1 = (e1 * C1_total * br * work_hours) if e1 else 0.0
+                    d2 = (e2 * C2_total * br * work_hours) if e2 else 0.0
                     dose_nuc = d1 + d2
+
                     e1s = f"{e1:.2e}" if e1 else "N/A"
                     e2s = f"{e2:.2e}" if e2 else "N/A"
-                    log(f"  双峰峰1(AMAD={amad1:.2f}μm) C={c1:.3e} e={e1s} D={d1:.3e} Sv")
-                    log(f"  双峰峰2(AMAD={amad2:.2f}μm) C={c2:.3e} e={e2s} D={d2:.3e} Sv")
+                    log(f"  双峰逐级分配：各级按 pdf 比例拆分到两峰")
+                    log(f"  峰1(AMAD={amad1:.2f}μm, frac={frac1:.2%}) C1={C1_total:.3e} e={e1s} D={d1:.3e} Sv")
+                    log(f"  峰2(AMAD={amad2:.2f}μm, frac={frac2:.2%}) C2={C2_total:.3e} e={e2s} D={d2:.3e} Sv")
                     log(f"  合计: {dose_nuc:.3e} Sv")
                     detail_rows.append({
                         'compound': compound, 'aerosol_type': effective_aerosol,
                         'nuclide': nuc_clean,
                         'amad': f"峰1:{amad1:.2f} / 峰2:{amad2:.2f}",
-                        'e_val': np.nan, 'act_conc': c1 + c2, 'dose': dose_nuc,
+                        'e_val': np.nan, 'act_conc': C1_total + C2_total, 'dose': dose_nuc,
                     })
                     total_dose += dose_nuc
 
