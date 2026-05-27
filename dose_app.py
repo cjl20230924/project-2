@@ -38,6 +38,9 @@ matplotlib.use('Qt5Agg')
 matplotlib.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
 matplotlib.rcParams['axes.unicode_minus'] = False
 matplotlib.rcParams['mathtext.fontset'] = 'stix'
+matplotlib.rcParams['font.size'] = 10
+matplotlib.rcParams['axes.titlesize'] = 11
+matplotlib.rcParams['axes.labelsize'] = 10
 warnings.filterwarnings('ignore')
 
 
@@ -227,7 +230,7 @@ class CalcThread(QThread):
 # ==================== PlotCanvas（支持动态分级）====================
 class PlotCanvas(FigureCanvas):
     def __init__(self, parent=None, w=7, h=7):
-        self.fig = Figure(figsize=(w, h), dpi=88)
+        self.fig = Figure(figsize=(w, h), dpi=120)
         super().__init__(self.fig); self.setParent(parent)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
@@ -247,10 +250,10 @@ class PlotCanvas(FigureCanvas):
         axes = self.fig.subplots(2, 2); sc = '#e74c3c' if is_corr else '#3498db'
         # 左上：单峰
         ax = axes[0,0]; ax.semilogx(xp, yu, 'b-', lw=2, label=f'单峰 AMAD={a_u:.2f} $\mu m$')
-        ax.scatter(_m, dd, c=sc, s=50, edgecolors='k', zorder=5, label=dlbl)
+        ax.scatter(_m, dd, c=sc, s=70, edgecolors='k', zorder=5, label=dlbl)
         ax.set_xlabel('空气动力学粒径 ($\mu m$)'); ax.set_ylabel('归一化密度')
         ax.set_title(f'单峰对数正态拟合  [{dlbl}]'); ax.grid(ls='--', alpha=0.5); ax.set_xlim(0.1, 50); ax.set_ylim(bottom=0)
-        ax.legend(fontsize=7, loc='upper left')
+        ax.legend(fontsize=9, loc='upper left')
         # 右上：双峰
         ax = axes[0,1]
         if not np.isnan(a2):
@@ -259,10 +262,10 @@ class PlotCanvas(FigureCanvas):
             ax.semilogx(xp, yc, 'b--', lw=1.5, label=f'粗峰 {a1:.1f} $\mu m$')
             ax.semilogx(xp, yf, 'r--', lw=1.5, label=f'细峰 {a2:.1f} $\mu m$')
         else: ax.semilogx(xp, yu, 'k--', lw=2, label='未检测到双峰')
-        ax.scatter(_m, dd, c=sc, s=50, edgecolors='k', zorder=5, label=dlbl)
-        ax.set_xlabel('空气动力学粒径 ($\mu m$)'); ax.set_title(f'双峰对数正态拟合  [{dlbl}]')
+        ax.scatter(_m, dd, c=sc, s=70, edgecolors='k', zorder=5, label=dlbl)
+        ax.set_xlabel('空气动力学粒径 ($\mu m$)');         ax.set_title(f'双峰对数正态拟合  [{dlbl}]')
         ax.grid(ls='--', alpha=0.5); ax.set_xlim(0.1, 50); ax.set_ylim(bottom=0)
-        ax.legend(fontsize=7, loc='upper left')
+        ax.legend(fontsize=9, loc='upper left')
         # 左下：正态概率图
         ax = axes[1,0]
         ra = raw[:-1] if len(raw) > 1 else raw; fa = raw[-1] if len(raw) > 0 else 0
@@ -280,7 +283,7 @@ class PlotCanvas(FigureCanvas):
                 ax.set_xscale('log'); ax.set_xlim(0.3, 30)
                 pts = [1,5,10,20,30,40,50,60,70,80,90,95,99]
                 ptt = norm.ppf(np.array(pts)/100); ax.set_yticks(ptt)
-                ax.set_yticklabels([str(p) for p in pts], fontsize=7)
+                ax.set_yticklabels([str(p) for p in pts], fontsize=8)
                 ax.set_ylim(norm.ppf(0.005), norm.ppf(0.995))
                 ax.scatter(_c[vld], yv, c='red', s=60, label='实测数据', zorder=5)
                 xf2 = np.logspace(np.log10(0.5), np.log10(21.3), 200)
@@ -292,11 +295,11 @@ class PlotCanvas(FigureCanvas):
                 sr = np.sum((yv-reg.predict(xv.reshape(-1,1)))**2); st = np.sum((yv-np.mean(yv))**2)
                 r2c = 1-sr/st if st > 0 else 0
                 ax.text(0.05, 0.95, f'$AMAD$={AP:.2f} $\mu m$\n$GSD$={GP:.2f}\n$R^2$={r2c:.4f}',
-                        transform=ax.transAxes, va='top', fontsize=8,
+                        transform=ax.transAxes, va='top', fontsize=9,
                         bbox=dict(boxstyle='round', fc='wheat', alpha=0.7))
         ax.set_xlabel('空气动力学粒径 ($\mu m$)'); ax.set_ylabel('累积活度比例 (%)')
         ax.set_title(f'正态概率图（ICRP方法）  [{dlbl}]'); ax.grid(True, which='both', ls='--', alpha=0.5)
-        ax.legend(fontsize=6.5, loc='lower right')
+        ax.legend(fontsize=8, loc='lower right')
         # 右下：摘要
         ax = axes[1,1]; ax.axis('off')
         ls = ['══════ 拟合参数摘要 ══════', f'数据类型: {dlbl}', '', '【单峰对数正态】',
@@ -309,7 +312,7 @@ class PlotCanvas(FigureCanvas):
         if not np.isnan(D50) and not np.isnan(GSD):
             ls += ['【正态概率图】', f'  $AMAD$ = {D50:.3f}', f'  $GSD$  = {GSD:.3f}', f'  $R^2$   = {R2:.4f}']
         else: ls += ['【正态概率图】', '  (数据点不足)']
-        ax.text(0.1, 0.95, '\n'.join(ls), transform=ax.transAxes, ha='left', va='top', fontsize=8.5,
+        ax.text(0.1, 0.95, '\n'.join(ls), transform=ax.transAxes, ha='left', va='top', fontsize=10,
                 bbox=dict(boxstyle='round', fc='#f0f4ff', alpha=0.9, ec='#6688aa'))
         self.fig.tight_layout(pad=2.0); self.draw()
 
@@ -324,7 +327,7 @@ class CompactCompoundCard(QFrame):
         o = QVBoxLayout(self); o.setContentsMargins(4,2,4,2); o.setSpacing(2)
         # Row 1: 化合物 + 占比
         r1 = QHBoxLayout(); r1.setSpacing(4)
-        r1.addWidget(QLabel("化合物:")); self.ce = QLineEdit("UO2"); self.ce.setMinimumWidth(70); r1.addWidget(self.ce, 1)
+        r1.addWidget(QLabel("化合物:")); self.ce = QComboBox(); self.ce.setEditable(True); self.ce.setMinimumWidth(70); r1.addWidget(self.ce, 1)
         r1.addWidget(QLabel("占比:")); self.af = QDoubleSpinBox()
         self.af.setRange(0,1); self.af.setSingleStep(0.05); self.af.setValue(1.0); self.af.setDecimals(3); self.af.setMinimumWidth(60)
         r1.addWidget(self.af, 1); o.addLayout(r1)
@@ -379,7 +382,7 @@ class CompactCompoundCard(QFrame):
 
     # ── 数据接口 ──
     def get_data(self):
-        c = self.ce.text().strip()
+        c = self.ce.currentText().strip()
         r = _COMPOUND_SHORT_TO_FULL.get(c)
         aero = r[1] if r else self.ac.currentText()
         return {'compound': c, 'aerosol_type': aero,
@@ -387,12 +390,23 @@ class CompactCompoundCard(QFrame):
                 'nuclides': dict(self._nuclides)}
 
     def set_data(self, d):
-        self.ce.setText(d.get('compound', 'UO2'))
+        cv = d.get('compound', 'UO2'); i = self.ce.findText(cv)
+        if i >= 0: self.ce.setCurrentIndex(i)
+        else: self.ce.setEditText(cv)
         self.af.setValue(d.get('activity_fraction', 1.0))
         at = d.get('aerosol_type', 'Intermediate Type M/S'); i = self.ac.findText(at)
         if i >= 0: self.ac.setCurrentIndex(i)
         self._nuclides = dict(d.get('nuclides', {'U_238': 0.993, 'U_235': 0.007}))
         self._rebuild_nuclide_list()
+
+    def update_compound_options(self, opts):
+        """从数据文件注入化合物下拉选项；保留已选值"""
+        cur = self.ce.currentText()
+        self.ce.blockSignals(True); self.ce.clear(); self.ce.addItems(opts)
+        if cur: i = self.ce.findText(cur)
+        if cur and i >= 0: self.ce.setCurrentIndex(i)
+        elif cur: self.ce.setEditText(cur)
+        self.ce.blockSignals(False)
 
     def update_aerosol_options(self, opts):
         cur = self.ac.currentText(); self.ac.clear(); self.ac.addItems(opts)
@@ -647,24 +661,30 @@ class DoseCalcApp(QMainWindow):
         elem = self.ec.currentText(); nucs = _element_nuclides_map.get(elem, [])
         # 气溶胶选项
         opts = set()
+        # ★ 化合物选项——从原始数据文件中提取
+        comp_opts = set()
         for n in nucs:
             df = get_nuclide_df(n)
-            if df is not None and 'aerosol_type' in df.columns: opts.update(df['aerosol_type'].dropna().unique())
+            if df is not None:
+                if 'aerosol_type' in df.columns: opts.update(df['aerosol_type'].dropna().unique())
+                if 'compound' in df.columns: comp_opts.update(df['compound'].dropna().unique())
         os2 = sorted(opts)
+        cs2 = sorted(comp_opts) if comp_opts else list(_COMPOUND_SHORT_TO_FULL.keys())
         for cd in s['compounds']:
             card = CompactCompoundCard()
             card.update_aerosol_options(os2)
+            card.update_compound_options(cs2)        # ★ 化合物下拉读取自数据文件
             card.update_nuclide_options(nucs)          # ★ 核素下拉读取自数据文件
             card.set_data(cd)
             # 设置变更回调（父级在核素增删后同步数据）
             card._on_changed_cb = lambda si=idx: self._on_cd(si)
-            # 字段变更信号
-            card.ce.textChanged.connect(lambda t, si=idx: self._on_cd(si))
+            # 字段变更信号（QComboBox editable → currentTextChanged）
+            card.ce.currentTextChanged.connect(lambda t, si=idx: self._on_cd(si))
             card.af.valueChanged.connect(lambda v, si=idx: self._on_cd(si))
             card.ac.currentTextChanged.connect(lambda t, si=idx: self._on_cd(si))
             db = QPushButton("✕ 删除化合物"); db.setFixedHeight(22)
             db.setStyleSheet("color:red; font-size:9px; border:1px solid #e0c0c0; border-radius:3px;")
-            db.clicked.connect(lambda ch, c=card: self._rm_card(c))
+            db.clicked.connect(lambda ch, c=card, si=idx: self._rm_card(c, si))
             pos = self._cl.count()-1; self._cl.insertWidget(pos, card); self._compound_cards.append(card)
             self._cl.insertWidget(pos+1, db); self._compound_cards.append(db)
 
@@ -675,10 +695,11 @@ class DoseCalcApp(QMainWindow):
         if si < self.st.rowCount():
             self.st.item(si, 4).setText(str(len(comps)))
 
-    def _rm_card(self, card):
-        si = self.st.selectedItems()
-        if not si: return; si = si[0].row()
-        if len(self._stages[si]['compounds']) <= 1: return QMessageBox.information(self, "提示", "至少保留一个化合物")
+    def _rm_card(self, card, si):
+        if si is None or si >= len(self._stages): return
+        if len(self._stages[si]['compounds']) <= 1:
+            QMessageBox.information(self, "提示", "至少保留一个化合物")
+            return
         ci = next((i for i, w in enumerate(self._compound_cards) if w is card), None)
         if ci is None: return
         nb = self._compound_cards[ci+1] if ci+1 < len(self._compound_cards) else None
@@ -791,13 +812,18 @@ class DoseCalcApp(QMainWindow):
 
     def _on_elem_changed(self, elem):
         nucs = _element_nuclides_map.get(elem, []); opts = set()
+        comp_opts = set()
         for n in nucs:
             df = get_nuclide_df(n)
-            if df is not None and 'aerosol_type' in df.columns: opts.update(df['aerosol_type'].dropna().unique())
+            if df is not None:
+                if 'aerosol_type' in df.columns: opts.update(df['aerosol_type'].dropna().unique())
+                if 'compound' in df.columns: comp_opts.update(df['compound'].dropna().unique())
         os2 = sorted(opts)
+        cs2 = sorted(comp_opts) if comp_opts else list(_COMPOUND_SHORT_TO_FULL.keys())
         for c in self._compound_cards:
             if isinstance(c, CompactCompoundCard):
                 c.update_aerosol_options(os2)
+                c.update_compound_options(cs2)
                 c.update_nuclide_options(nucs)
         self._current_elem = elem
 
@@ -1047,9 +1073,9 @@ class DoseCalcApp(QMainWindow):
         ]
         self.sl.setText("\n".join(lines))
 
-        # 更新拟合图（仅在 modal 或 probit 方法时）
-        if result['method'] in ('modal', 'probit'):
-            self._redraw_fit_plot(result)
+        # ★ 不覆盖拟合图像——图像来自「运行拟合」按钮，不应被后续计算改写
+        # 仅更新拟合参数标签文字（与当前计算方法一致）
+        self.fil.setText(f"拟合参数: {info.get('desc','')}")
 
     def _redraw_fit_plot(self, result):
         """从 calc 结果重绘拟合图"""
