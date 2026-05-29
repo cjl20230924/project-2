@@ -1,18 +1,19 @@
 """
-监测法内照射剂量计算系统 v1.1 (桌面版)
-基于 PyQt5 实现，依据 GB/T 16148 及 ICRP Publication 54/78/130
+监测法内照射剂量计算系统 v2.0 (桌面版)
+基于 PyQt5 实现，依据 GB/T 16148-2009 —— z(t) 函数法
 
 计算方法：
-  E = I × e(AMAD, route)
-  I = M / m(T)
+  E(50) = M × z(t)
+
   其中
-    M  — 生物样品测量值（Bq 或 Bq/d）
-    m  — 剂量当量系数（由 m_data/ 数据文件提供）
-    e  — 剂量系数（Sv/Bq），按粒径双对数插值（由 processed_nuclide_files/ 提供）
-    AMAD — 可手动输入或从下拉列表选择（μm）
+    M     — 生物样品测量值（Bq 或 Bq/d）
+    z(t)  — 剂量-含量转换函数（Sv/Bq），从 z_data 查表插值
+    * 时间 t: 常规监测 t = T/2; 应急监测直接输入
+    * AMAD 插值: 双对数 (log-log)  时间插值: 线性 (linear)
 
 操作步骤：
-  ① 选核素  ② 设粒径  ③ 选监测参数（m 值唯一确定）  ④ 输入 M  ⑤ 计算 / 添加
+  ① 监测类型 → ② 核素 → ③ 摄入途径 → ④ 物质/fA
+  → ⑤ 样本类型 → ⑥ (吸入)AMAD粒径 → ⑦ 时间 → ⑧ 测量值M → ⑨ 计算
 """
 
 # =====================================================================
@@ -43,177 +44,159 @@ matplotlib.rcParams['axes.unicode_minus'] = False
 warnings.filterwarnings('ignore')
 
 # =====================================================================
-#   路径辅助
+#   路径 & 数据
 # =====================================================================
-def resource_path(rel):
-    if hasattr(sys, '_MEIPASS'):
-        return os.path.join(sys._MEIPASS, rel)
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', rel)
+HERE = Path(os.path.dirname(os.path.abspath(__file__)))
+Z_DATA_DIR = HERE.parent / 'z_data'
 
-DATA_DIR   = Path(resource_path('processed_nuclide_files'))
-M_DATA_DIR = Path(resource_path('m_data'))
+_zdata: pd.DataFrame = pd.DataFrame()        # z(t) 主表
+_zdata_meta: list = []                       # 元数据列表
+
+
+def scan_z_data():
+    """扫描 z_data 目录，加载 U_235_zdata.csv"""
+    global _zdata, _zdata_meta
+    csv_path = Z_DATA_DIR / 'U_235_zdata.csv'
+    if not csv_path.exists():
+        print(f'[警告] z数据文件不存在: {csv_path}')
+        return
+    _zdata = pd.read_csv(csv_path)
+    # 统一列类型
+    for c in ['time_days', 'fA', 'amad_um']:
+        if c in _zdata.columns:
+            _zdata[c] = pd.to_numeric(_zdata[c], errors='coerce')
+    # 样本类型列（不含元数据和时间列）
+    meta_cols = {'radionuclide', 'route_of_intake', 'material', 'fA', 'amad_um', 'time_days'}
+    sample_cols = [c for c in _zdata.columns if c not in meta_cols]
+    # 构建元数据索引
+    _zdata_meta = (
+        _zdata[['radionuclide', 'route_of_intake', 'material', 'fA', 'amad_um']]
+        .drop_duplicates().to_dict('records')
+    )
+    print(f'[z_data] 加载完成: {len(_zdata)} 行, '
+          f'{len(_zdata_meta)} 个元数据块, 样本列: {sample_cols}')
+
 
 # =====================================================================
-#   数据加载 —— m_data
+#   插值函数
 # =====================================================================
-_ROUTINE_DATA: pd.DataFrame = pd.DataFrame()
-_SPECIAL_DATA: pd.DataFrame = pd.DataFrame()
+def _linear_interp(x, xp, yp):
+    """线性插值: x 在 xp 中查找, 返回插值 y; xp 需递增排序"""
+    x = np.asarray(x, dtype=float); xp = np.asarray(xp, dtype=float); yp = np.asarray(yp, dtype=float)
+    if x <= xp[0]:
+        return float(yp[0])
+    if x >= xp[-1]:
+        return float(yp[-1])
+    idx = np.searchsorted(xp, x)
+    x0, x1 = xp[idx - 1], xp[idx]
+    y0, y1 = yp[idx - 1], yp[idx]
+    if x1 == x0:
+        return float(y0)
+    return float(y0 + (x - x0) / (x1 - x0) * (y1 - y0))
 
-_COL_ALIASES = {
-    'radionuclide':      ['radionuclide', '核素', 'nuclide'],
-    'aerosol_type':      ['aerosols type', 'aerosol_type', '气溶胶类型'],
-    'monitoring_method': ['monitoring method', 'monitoring_method', '监测方法'],
-    'time_days':         ['period (d)', 'time (d)', '周期', '时间', 'period', 'time'],
-    'm_value':           ["m(t/2)", "m(t)", "m值", "m_value", "m"],
-    'intake_route':      ['route of intake', 'intake_route', '摄入途径', 'route'],
-    'fA':                ['fa'],
-}
 
-def _norm_col(df: pd.DataFrame) -> pd.DataFrame:
-    rename = {}
-    for std, aliases in _COL_ALIASES.items():
-        for c in df.columns:
-            if c.strip().lower() in aliases:
-                rename[c] = std
-                break
-    df = df.rename(columns=rename)
-    if 'aerosol_type' in df.columns:
-        df['aerosol_type'] = df['aerosol_type'].replace('Gaseous', 'Unspecified')
-    for num_col in ['time_days', 'm_value', 'fA']:
-        if num_col in df.columns:
-            df[num_col] = pd.to_numeric(df[num_col], errors='coerce')
-    return df
+def _loglog_interp(x, xp, yp):
+    """双对数插值 (粒径 AMAD): 对 x 和 xp 取 log10 后线性插值"""
+    xp = np.asarray(xp, dtype=float); yp = np.asarray(yp, dtype=float)
+    if x <= xp[0]:
+        return float(yp[0])
+    if x >= xp[-1]:
+        return float(yp[-1])
+    lx = np.log10(x); lp = np.log10(xp)
+    idx = np.searchsorted(lp, lx)
+    lx0, lx1 = lp[idx - 1], lp[idx]
+    y0, y1 = yp[idx - 1], yp[idx]
+    if lx1 == lx0:
+        return float(y0)
+    return float(10 ** (np.log10(y0) + (lx - lx0) / (lx1 - lx0) * (np.log10(y1) - np.log10(y0))))
 
-def _parse_m_files(paths: list) -> pd.DataFrame:
-    frames = []
-    for f in paths:
-        try:
-            if f.suffix == '.parquet':
-                df = pd.read_parquet(f)
-            elif f.suffix in ('.xlsx', '.xls'):
-                df = pd.read_excel(f)
+
+def lookup_z(radionuclide: str, route: str, material: str, sample_type: str,
+             t: float, ps_um: float = None) -> float | None:
+    """
+    查 z(t) 值
+
+    参数:
+        radionuclide, route, material: 元数据筛选
+        sample_type: 样本列名 (whole_body / urine_24h / faeces_24h / ...)
+        t: 目标时间 (天)
+        ps_um: 自定义粒径 (μm), 仅 Inhalation 且非精确匹配 AMAD 时使用
+    """
+    # 1) 按元数据筛选
+    sub = _zdata[
+        (_zdata['radionuclide'] == radionuclide) &
+        (_zdata['route_of_intake'] == route) &
+        (_zdata['material'] == material)
+    ].copy()
+
+    if sub.empty:
+        print(f'[z] 未找到匹配: {radionuclide}/{route}/{material}')
+        return None
+
+    # 2) 判断是否需要 AMAD 插值
+    amad_vals = sorted(sub['amad_um'].dropna().unique())
+
+    if len(amad_vals) == 0:
+        # 无 AMAD 维度（Ingestion / Injection）: 直接时间线性插值
+        times = sub['time_days'].values
+        zvals = sub[sample_type].values
+        mask = ~np.isnan(zvals)
+        if mask.sum() == 0:
+            return None
+        return _linear_interp(t, times[mask], zvals[mask])
+
+    # 3) 有 AMAD 维度 (Inhalation)
+    if ps_um is not None and ps_um not in amad_vals:
+        # 双对数插值: 对每个 time_days 在两相邻 AMAD 间插 z
+        amad_arr = np.array(amad_vals)
+        if ps_um <= amad_arr[0]:
+            sub = sub[sub['amad_um'] == amad_arr[0]]
+        elif ps_um >= amad_arr[-1]:
+            sub = sub[sub['amad_um'] == amad_arr[-1]]
+        else:
+            idx = np.searchsorted(amad_arr, ps_um)
+            lo_amad, hi_amad = amad_arr[idx - 1], amad_arr[idx]
+            lo_sub = sub[sub['amad_um'] == lo_amad].set_index('time_days')[sample_type]
+            hi_sub = sub[sub['amad_um'] == hi_amad].set_index('time_days')[sample_type]
+            # 合并时间点
+            common_times = lo_sub.index.intersection(hi_sub.index)
+            if len(common_times) < 2:
+                # 回退到最近 AMAD
+                sub = sub[sub['amad_um'] == lo_amad]
             else:
-                df = pd.read_csv(f)
-            frames.append(_norm_col(df))
-        except Exception as e:
-            print(f'[警告] 跳过 {f.name}: {e}')
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+                # 对每个公共时间点做对数回归插值 z_interp
+                interp_z = {}
+                for ti in common_times:
+                    z_lo = lo_sub.loc[ti]; z_hi = hi_sub.loc[ti]
+                    if pd.notna(z_lo) and pd.notna(z_hi):
+                        interp_z[ti] = 10 ** (np.log10(z_lo) + (np.log10(ps_um) - np.log10(lo_amad)) /
+                                              (np.log10(hi_amad) - np.log10(lo_amad)) *
+                                              (np.log10(z_hi) - np.log10(z_lo)))
+                if len(interp_z) < 2:
+                    sub = sub[sub['amad_um'] == lo_amad]
+                else:
+                    times = np.array(sorted(interp_z.keys()))
+                    zvals = np.array([interp_z[ti] for ti in times])
+                    return _linear_interp(t, times, zvals)
 
-def scan_monitoring():
-    global _ROUTINE_DATA, _SPECIAL_DATA
-    if not M_DATA_DIR.exists():
-        return
-    routine_files = [f for ext in ('.csv', '.xlsx', '.xls', '.parquet')
-                     for f in M_DATA_DIR.glob(f'*{ext}') if 'routine' in f.stem.lower()]
-    special_files = [f for ext in ('.csv', '.xlsx', '.xls', '.parquet')
-                     for f in M_DATA_DIR.glob(f'*{ext}') if 'special' in f.stem.lower()]
-    _ROUTINE_DATA = _parse_m_files(routine_files)
-    _SPECIAL_DATA = _parse_m_files(special_files)
+    # 4) 精确 AMAD 匹配: 直接时间线性插值
+    if ps_um is not None:
+        sub = sub[sub['amad_um'] == ps_um]
+    times = sub['time_days'].values
+    zvals = sub[sample_type].values
+    mask = ~np.isnan(zvals)
+    if mask.sum() == 0:
+        return None
+    return _linear_interp(t, times[mask], zvals[mask])
+
 
 # =====================================================================
-#   数据加载 —— processed_nuclide_files（剂量系数）
+#   核心计算
 # =====================================================================
-_nuclide_cache: dict = {}
-_nuclide_files: dict = {}
-_element_map:   dict = {}
+def calc_effective_dose(M: float, z: float) -> float:
+    """E(50) = M × z(t)"""
+    return M * z
 
-def scan_nuclides():
-    global _nuclide_files, _element_map
-    if not DATA_DIR.exists():
-        print(f'[警告] 剂量系数目录不存在: {DATA_DIR}')
-        return
-    for f in list(DATA_DIR.glob('*.parquet')) + list(DATA_DIR.glob('*.xlsx')):
-        try:
-            df = pd.read_parquet(f) if f.suffix == '.parquet' else pd.read_excel(f)
-            cm = {}
-            for c in df.columns:
-                cl = c.lower().strip()
-                if cl == 'element':              cm[c] = 'element'
-                elif 'radionuclide' in cl:       cm[c] = 'radionuclide'
-                elif 'route' in cl:              cm[c] = 'route_of_intake'
-                elif 'aerosol' in cl:            cm[c] = 'aerosol_type'
-                elif 'compound' in cl:           cm[c] = 'compound'
-                elif 'particle' in cl:           cm[c] = 'particle_size'
-                elif 'dose' in cl and 'coef' in cl: cm[c] = 'dose_coefficient'
-                elif cl == 'fa':                 cm[c] = 'fA'
-            df = df.rename(columns=cm)
-            if 'particle_size' in df.columns:
-                df['particle_size'] = pd.to_numeric(
-                    df['particle_size'].astype(str)
-                    .str.replace(r'\s*[µμ]m\s*|\s*micron\s*', '', regex=True)
-                    .replace(['', 'nan', 'NaN', 'None'], np.nan), errors='coerce')
-            if 'dose_coefficient' in df.columns:
-                df['dose_coefficient'] = pd.to_numeric(df['dose_coefficient'], errors='coerce')
-            if 'aerosol_type' in df.columns:
-                df['aerosol_type'] = df['aerosol_type'].replace('Gaseous', 'Unspecified')
-            if 'element' in df.columns and 'radionuclide' in df.columns:
-                elem = str(df['element'].iloc[0])
-                nuc  = str(df['radionuclide'].iloc[0]).replace('_', '-')
-                _nuclide_files[nuc] = (f, df)
-                _element_map.setdefault(elem, [])
-                if nuc not in _element_map[elem]:
-                    _element_map[elem].append(nuc)
-        except Exception as e:
-            print(f'[警告] 加载 {f.name} 失败: {e}')
-
-def _norm_nuc(n):
-    return n.strip().replace('_', '-')
-
-def get_nuclide_df(nuclide: str, route: str = 'Inhalation') -> pd.DataFrame | None:
-    """根据核素名和摄入途径获取剂量系数 DataFrame"""
-    nk  = _norm_nuc(nuclide)
-    key = (nk, route)
-    if key in _nuclide_cache:
-        return _nuclide_cache[key]
-    if nk not in _nuclide_files:
-        return None
-    _, df = _nuclide_files[nk]
-    if route and 'route_of_intake' in df.columns:
-        sub = df[df['route_of_intake'] == route].copy()
-        result = sub if not sub.empty else df.copy()   # fallback：途径无数据时用全部
-    else:
-        result = df.copy()
-    _nuclide_cache[key] = result
-    return result
-
-def interp_dose_coeff(df: pd.DataFrame, aerosol: str, ps_um: float) -> float | None:
-    """按粒径双对数插值剂量系数 e (Sv/Bq)"""
-    if df is None or df.empty:
-        return None
-    if 'aerosol_type' not in df.columns:
-        return None
-    sub = df[df['aerosol_type'] == aerosol].copy()
-    if sub.empty:
-        return None
-    sub = sub.dropna(subset=['particle_size', 'dose_coefficient']).sort_values('particle_size')
-    if sub.empty:
-        r0 = df[df['aerosol_type'] == aerosol]
-        return float(r0['dose_coefficient'].iloc[0]) if not r0.empty else None
-    ps = sub['particle_size'].values
-    dc = sub['dose_coefficient'].values
-    if len(ps) == 1:
-        return float(dc[0])
-    if ps_um <= ps.min():
-        return float(dc[0])
-    if ps_um >= ps.max():
-        return float(dc[-1])
-    lx = np.log(ps_um)
-    lp = np.log(ps)
-    for i in range(len(lp) - 1):
-        if lp[i] <= lx <= lp[i + 1]:
-            y1, y2 = dc[i], dc[i + 1]
-            x1, x2 = lp[i], lp[i + 1]
-            return float(y1 + (lx - x1) / (x2 - x1) * (y2 - y1)) if x2 != x1 else float(y1)
-    return None
-
-# =====================================================================
-#   GB/T 16148 核心计算
-# =====================================================================
-def calc_intake(M: float, m: float) -> float:
-    return M / m if m != 0 else float('nan')
-
-def calc_dose(I: float, e: float) -> float:
-    return I * e
 
 # =====================================================================
 #   ResultTable —— 带"删除"按钮的结果表格
@@ -221,9 +204,8 @@ def calc_dose(I: float, e: float) -> float:
 class ResultTable(QTableWidget):
     row_deleted = pyqtSignal(int)
 
-    HEADERS = ['ID', '核素', '摄入途径', '气溶胶类型', '粒径(μm)', '监测方法',
-               '时间(d)', 'm值', '测量值M', '摄入量I(Bq)',
-               '剂量系数e(Sv/Bq)', '有效剂量E(Sv)', '操作']
+    HEADERS = ['ID', '核素', '摄入途径', '物质/fA', 'AMAD(μm)',
+               '样本类型', '时间(d)', 'z(t)(Sv/Bq)', '测量值M', '有效剂量E(Sv)', '操作']
 
     def __init__(self, parent=None):
         super().__init__(0, len(self.HEADERS), parent)
@@ -244,687 +226,579 @@ class ResultTable(QTableWidget):
         vals = [
             str(item['id']),
             item['nuclide'],
-            item.get('intake_route', '—'),
-            item.get('aerosol_type', '—'),
-            f"{item['particle_size']:.3f}" if item.get('particle_size') is not None else '—',
-            item.get('monitoring_method', '—'),
-            str(item.get('time_days', '—')),
-            f"{item['m_value']:.3e}",
+            item.get('route', '—'),
+            item.get('material', '—'),
+            f"{item['ps_um']:.3f}" if item.get('ps_um') is not None else '—',
+            item.get('sample_type', '—'),
+            f"{item['t']:.4f}",
+            f"{item['z']:.3e}",
             f"{item['M']:.3e}",
-            f"{item['I']:.3e}",
-            f"{item['e_value']:.3e}",
             f"{item['E']:.3e}",
         ]
         for col, v in enumerate(vals):
             cell = QTableWidgetItem(v)
             cell.setTextAlignment(Qt.AlignCenter)
-            if col == 11:
-                cell.setBackground(QColor('#d5f5e3'))
+            if col == 0:
+                cell.setFont(QFont('monospace', 8))
             self.setItem(row, col, cell)
-        del_btn = QPushButton('🗑 删除')
-        del_btn.setFixedHeight(24)
-        del_btn.setStyleSheet('QPushButton{color:#c0392b; font-size:11px; border:none;}')
-        del_btn.clicked.connect(lambda _, iid=item['id']: self._on_delete(iid))
-        self.setCellWidget(row, len(self.HEADERS) - 1, del_btn)
+        # 删除按钮
+        btn = QPushButton(' 删除 ')
+        btn.setFixedSize(50, 22)
+        btn.setStyleSheet('QPushButton{color:#c0392b; font-weight:bold; font-size:10px;} '
+                          'QPushButton:hover{background:#e74c3c; color:white;}')
+        btn.clicked.connect(lambda _, r=row: self._delete_row(r))
+        self.setCellWidget(row, len(self.HEADERS) - 1, btn)
+        self.scrollToBottom()
 
-    def _on_delete(self, iid: int):
-        for r in range(self.rowCount()):
-            cell = self.item(r, 0)
-            if cell and cell.text() == str(iid):
-                self.removeRow(r)
-                self._items = [i for i in self._items if i['id'] != iid]
-                self.row_deleted.emit(iid)
-                return
+    def _delete_row(self, row: int):
+        del self._items[row]
+        self.removeRow(row)
+        # 重编号
+        for i in range(self.rowCount()):
+            self.item(i, 0).setText(str(i + 1))
+            btn = self.cellWidget(i, len(self.HEADERS) - 1)
+            if btn:
+                btn.clicked.disconnect()
+                btn.clicked.connect(lambda _, r=i: self._delete_row(r))
+        self.row_deleted.emit(row)
+
+    def get_items(self):
+        return self._items
 
     def clear_all(self):
-        self.setRowCount(0)
         self._items.clear()
+        self.setRowCount(0)
 
     def total_dose(self) -> float:
-        return sum(i['E'] for i in self._items)
+        return sum(it['E'] for it in self._items)
 
-    def export_df(self) -> pd.DataFrame:
-        return pd.DataFrame([{
-            'ID':             i['id'],
-            '核素':            i['nuclide'],
-            '摄入途径':         i.get('intake_route', ''),
-            '气溶胶类型': i.get('aerosol_type', ''),
-            '粒径(μm)':        i.get('particle_size', ''),
-            '监测方法':         i.get('monitoring_method', ''),
-            '时间(d)':         i.get('time_days', ''),
-            'm值':             i['m_value'],
-            '测量值M':          i['M'],
-            '摄入量I(Bq)':      i['I'],
-            '剂量系数e(Sv/Bq)': i['e_value'],
-            '有效剂量E(Sv)':    i['E'],
-        } for i in self._items])
 
 # =====================================================================
-#   ParamPanel —— 左侧参数面板（重构）
-#   步骤：① 核素  ② 粒径 AMAD  ③ 监测参数→m值  ④ 剂量系数e  ⑤ 测量值M  ⑥ 计算
-# =====================================================================
-class ParamPanel(QWidget):
-    item_ready = pyqtSignal(dict)
-
-    def __init__(self, monitor_type: str = '常规监测', parent=None):
-        super().__init__(parent)
-        self._monitor_type = monitor_type
-        self._next_id  = 1
-        self._m_value  = None
-        self._e_value  = None
-        self._I_value  = None
-        self._E_value  = None
-        self._calc_result = None
-        self._build_ui()
-
-    # ------------------------------------------------------------------
-    def _build_ui(self):
-        root = QVBoxLayout(self)
-        root.setSpacing(8)
-        root.setContentsMargins(8, 8, 8, 8)
-
-        # ── ① 核素选择 ──────────────────────────────────
-        g_nuc = QGroupBox('① 核素选择')
-        fl = QFormLayout(g_nuc)
-        fl.setLabelAlignment(Qt.AlignRight)
-        self.cb_element = QComboBox()
-        self.cb_nuclide = QComboBox()
-        fl.addRow('元素：', self.cb_element)
-        fl.addRow('核素：', self.cb_nuclide)
-        root.addWidget(g_nuc)
-
-        # ── ② 粒径 AMAD ──────────────────────────────────
-        g_ps = QGroupBox('② 粒径 AMAD (μm)')
-        fl_ps = QFormLayout(g_ps)
-        fl_ps.setLabelAlignment(Qt.AlignRight)
-        ps_row = QHBoxLayout()
-        self.cb_ps_preset = QComboBox()
-        PRESET_PS = ['0.001', '0.003', '0.01', '0.03', '0.1', '0.3',
-                     '1.0', '3.0', '5.0', '10.0', '20.0', '自定义']
-        self.cb_ps_preset.addItems(PRESET_PS)
-        self.cb_ps_preset.setCurrentText('5.0')
-        self.spin_ps_custom = QDoubleSpinBox()
-        self.spin_ps_custom.setRange(0.001, 100.0)
-        self.spin_ps_custom.setDecimals(3)
-        self.spin_ps_custom.setValue(5.0)
-        self.spin_ps_custom.setSuffix(' μm')
-        self.spin_ps_custom.setVisible(False)
-        self.spin_ps_custom.setMinimumWidth(110)
-        ps_row.addWidget(self.cb_ps_preset)
-        ps_row.addWidget(self.spin_ps_custom)
-        ps_row.addStretch()
-        fl_ps.addRow('粒径预设：', ps_row)
-        root.addWidget(g_ps)
-
-        # ── ③ 监测参数 → m 值 ────────────────────────────
-        g_filt = QGroupBox('③ 监测参数（确定 m 值 / e 值气溶胶类型）')
-        fl2 = QFormLayout(g_filt)
-        fl2.setLabelAlignment(Qt.AlignRight)
-
-        self.cb_intake  = QComboBox()   # 摄入途径（常规固定 Inhalation；应急三选一）
-        self.cb_aerosol = QComboBox()   # 气溶胶类型
-        self.cb_method  = QComboBox()   # 监测方法
-        self.cb_time    = QComboBox()   # 时间/周期
-        self.cb_fA      = QComboBox()   # fA（食入时）
-
-        # 摄入途径行（常规监测时置灰并固定为 Inhalation）
-        self.lbl_intake_row = QLabel('摄入途径：')
-        fl2.addRow(self.lbl_intake_row, self.cb_intake)
-        fl2.addRow('气溶胶类型：', self.cb_aerosol)
-        fl2.addRow('监测方法：',   self.cb_method)
-        fl2.addRow('时间 (d)：',   self.cb_time)
-        fl2.addRow('fA：',         self.cb_fA)
-
-        self.lbl_m = QLabel('—')
-        self.lbl_m.setStyleSheet('color:#1a5276; font-weight:bold; font-size:12px;')
-        fl2.addRow('m 值：', self.lbl_m)
-        root.addWidget(g_filt)
-
-        # ── ④ 剂量系数 e ─────────────────────────────────
-        self.g_e = QGroupBox('④ 剂量系数 e（自动计算，气溶胶类型与③共用）')
-        fl3 = QFormLayout(self.g_e)
-        fl3.setLabelAlignment(Qt.AlignRight)
-
-        self.lbl_e = QLabel('—')
-        self.lbl_e.setStyleSheet('color:#1a5276; font-weight:bold; font-size:12px;')
-        fl3.addRow('e (Sv/Bq)：', self.lbl_e)
-        root.addWidget(self.g_e)
-
-        # ── ⑤ 测量值 M ───────────────────────────────────
-        g_M = QGroupBox('⑤ 测量值 M')
-        fl_M = QFormLayout(g_M)
-        fl_M.setLabelAlignment(Qt.AlignRight)
-        self.spin_M = QDoubleSpinBox()
-        self.spin_M.setRange(0, 1e18)
-        self.spin_M.setDecimals(6)
-        self.spin_M.setSingleStep(1.0)
-        self.spin_M.setValue(1.0)
-        self.spin_M.setSuffix('  Bq（或 Bq/d）')
-        fl_M.addRow('M =', self.spin_M)
-        root.addWidget(g_M)
-
-        # ── ⑥ 计算结果 ───────────────────────────────────
-        g_result = QGroupBox('⑥ 计算结果')
-        fl_r = QFormLayout(g_result)
-        fl_r.setLabelAlignment(Qt.AlignRight)
-        self.lbl_I    = QLabel('I = —')
-        self.lbl_I.setStyleSheet('color:#1a5276; font-size:12px;')
-        self.lbl_dose = QLabel('E = —')
-        self.lbl_dose.setStyleSheet('font-size:14px; font-weight:bold; color:#148f77;')
-        fl_r.addRow('摄入量：', self.lbl_I)
-        fl_r.addRow('有效剂量：', self.lbl_dose)
-        root.addWidget(g_result)
-
-        # ── 按钮 ─────────────────────────────────────────
-        btn_row = QHBoxLayout()
-        self.btn_calc = QPushButton('🔢 计算剂量')
-        self.btn_calc.setStyleSheet(
-            'background:#2980b9; color:white; font-weight:bold; padding:7px 20px; border-radius:4px;')
-        self.btn_add = QPushButton('➕ 添加到列表')
-        self.btn_add.setStyleSheet(
-            'background:#27ae60; color:white; font-weight:bold; padding:7px 20px; border-radius:4px;')
-        self.btn_add.setEnabled(False)
-        btn_row.addWidget(self.btn_calc)
-        btn_row.addWidget(self.btn_add)
-        root.addLayout(btn_row)
-        root.addStretch()
-
-        # ── 信号连接 ─────────────────────────────────────
-        self.cb_element.currentTextChanged.connect(self._on_element_changed)
-        self.cb_nuclide.currentTextChanged.connect(self._on_nuclide_changed)
-        self.cb_ps_preset.currentTextChanged.connect(self._on_ps_preset_changed)
-        self.spin_ps_custom.valueChanged.connect(self._refresh_e)
-        self.cb_intake.currentTextChanged.connect(self._on_intake_changed)
-        self.cb_aerosol.currentTextChanged.connect(self._on_aerosol_changed)
-        self.cb_method.currentTextChanged.connect(self._refresh_filter)
-        self.cb_time.currentTextChanged.connect(self._refresh_filter)
-        self.cb_fA.currentTextChanged.connect(self._refresh_filter)
-        self.btn_calc.clicked.connect(self._on_calc)
-        self.btn_add.clicked.connect(self._on_add)
-
-    # ==================================================================
-    #   公有接口
-    # ==================================================================
-    def populate(self):
-        """扫描完成后由主窗口调用，填充元素列表"""
-        elems = sorted(_element_map.keys())
-        self.cb_element.blockSignals(True)
-        self.cb_element.clear()
-        self.cb_element.addItems(elems)
-        self.cb_element.blockSignals(False)
-        if elems:
-            self.cb_element.setCurrentIndex(0)
-            self._on_element_changed(elems[0])
-
-    def set_monitor_type(self, mtype: str):
-        self._monitor_type = mtype
-        nuc = self.cb_nuclide.currentText()
-        if nuc:
-            self._on_nuclide_changed(nuc)
-
-    # ==================================================================
-    #   内部槽
-    # ==================================================================
-    def _on_element_changed(self, elem: str):
-        self.cb_nuclide.blockSignals(True)
-        self.cb_nuclide.clear()
-        nucs = sorted(_element_map.get(elem, []))
-        self.cb_nuclide.addItems(nucs)
-        self.cb_nuclide.blockSignals(False)
-        if nucs:
-            self.cb_nuclide.setCurrentIndex(0)
-            self._on_nuclide_changed(nucs[0])
-
-    def _on_nuclide_changed(self, nuc: str):
-        """核素变更：重新填充摄入途径下拉，触发后续过滤链"""
-        if not nuc:
-            return
-        data = _ROUTINE_DATA if self._monitor_type == '常规监测' else _SPECIAL_DATA
-        if data.empty:
-            self._clear_filters()
-            return
-
-        df_n = data[data['radionuclide'].astype(str)
-                    .str.replace('_', '-').str.strip() == nuc.strip()]
-
-        # ── 摄入途径 ──
-        if self._monitor_type == '应急监测' and 'intake_route' in df_n.columns:
-            # 应急监测：从数据中读取实际存在的途径，并补全标准三途径顺序
-            raw_routes = set(df_n['intake_route'].dropna().astype(str).str.strip().unique())
-            preferred  = ['Inhalation', 'Injection', 'Ingestion']
-            routes     = [r for r in preferred if r in raw_routes] + \
-                         sorted(raw_routes - set(preferred))
-            if not routes:
-                routes = ['Inhalation']
-            self._fill_cb(self.cb_intake, routes, block=True)
-            self.cb_intake.setEnabled(True)
-        else:
-            # 常规监测：固定 Inhalation
-            self._fill_cb(self.cb_intake, ['Inhalation'], block=True)
-            self.cb_intake.setEnabled(False)
-
-        # 触发监测参数刷新
-        self._refresh_filter()
-        # 触发 e 值刷新（气溶胶类型与③共用 cb_aerosol）
-        self._refresh_e()
-
-    def _on_intake_changed(self, route: str):
-        """摄入途径变更：重刷监测参数过滤链 + e 值"""
-        if not route:
-            return
-        self._refresh_filter()
-        self._refresh_e()
-
-    def _on_aerosol_changed(self, _aero: str):
-        """气溶胶类型变更：刷新 m 值过滤 + 刷新 e 值插值（③④共用此下拉）"""
-        self._refresh_filter()
-        self._refresh_e()
-
-    def _refresh_filter(self):
-        """
-        逐步筛选 m 值数据：
-        途径 → 气溶胶 → 监测方法 → 时间 → fA → 读 m 值
-        """
-        nuc = self.cb_nuclide.currentText()
-        if not nuc:
-            return
-        data = _ROUTINE_DATA if self._monitor_type == '常规监测' else _SPECIAL_DATA
-        if data.empty:
-            return
-
-        df_n = data[data['radionuclide'].astype(str)
-                    .str.replace('_', '-').str.strip() == nuc.strip()].copy()
-
-        # 途径过滤
-        route = self.cb_intake.currentText().strip()
-        if route and 'intake_route' in df_n.columns:
-            sub = df_n[df_n['intake_route'].astype(str).str.strip() == route]
-            if not sub.empty:
-                df_n = sub
-
-        # 气溶胶类型
-        if 'aerosol_type' in df_n.columns:
-            aero_vals = sorted(df_n['aerosol_type'].dropna().astype(str).unique())
-            self._fill_cb(self.cb_aerosol, aero_vals, block=True)
-            sel_aero = self.cb_aerosol.currentText()
-            if sel_aero:
-                sub = df_n[df_n['aerosol_type'].astype(str) == sel_aero]
-                if not sub.empty:
-                    df_n = sub
-
-        # 监测方法
-        if 'monitoring_method' in df_n.columns:
-            meth_vals = sorted(df_n['monitoring_method'].dropna().astype(str).unique())
-            self._fill_cb(self.cb_method, meth_vals, block=True)
-            sel_meth = self.cb_method.currentText()
-            if sel_meth:
-                sub = df_n[df_n['monitoring_method'].astype(str) == sel_meth]
-                if not sub.empty:
-                    df_n = sub
-
-        # 时间
-        if 'time_days' in df_n.columns:
-            time_vals = sorted(df_n['time_days'].dropna().unique())
-            self._fill_cb(self.cb_time, [str(t) for t in time_vals], block=True)
-            sel_t = self.cb_time.currentText()
-            try:
-                sel_t_f = float(sel_t)
-                sub = df_n[df_n['time_days'] == sel_t_f]
-                if not sub.empty:
-                    df_n = sub
-            except Exception:
-                pass
-
-        # fA
-        if 'fA' in df_n.columns:
-            fa_vals = sorted(df_n['fA'].dropna().unique())
-            if fa_vals:
-                self._fill_cb(self.cb_fA, [str(v) for v in fa_vals], block=True)
-                self.cb_fA.setEnabled(True)
-                try:
-                    sel_fa = float(self.cb_fA.currentText())
-                    sub = df_n[df_n['fA'] == sel_fa]
-                    if not sub.empty:
-                        df_n = sub
-                except Exception:
-                    pass
-            else:
-                self._fill_cb(self.cb_fA, ['—'], block=True)
-                self.cb_fA.setEnabled(False)
-        else:
-            self._fill_cb(self.cb_fA, ['—'], block=True)
-            self.cb_fA.setEnabled(False)
-
-        # 读 m 值
-        if len(df_n) == 1 and 'm_value' in df_n.columns:
-            m = df_n.iloc[0]['m_value']
-            self.lbl_m.setText(f'{m:.3e}')
-            self._m_value = float(m)
-        elif len(df_n) > 1 and 'm_value' in df_n.columns:
-            self.lbl_m.setText(f'匹配 {len(df_n)} 条，请细化条件')
-            self._m_value = None
-        else:
-            self.lbl_m.setText('未找到')
-            self._m_value = None
-
-        self._update_I()
-
-    def _on_ps_preset_changed(self, text: str):
-        self.spin_ps_custom.setVisible(text == '自定义')
-        self._refresh_e()
-
-    def _refresh_e(self):
-        nuc   = self.cb_nuclide.currentText()
-        route = self.cb_intake.currentText() or 'Inhalation'
-        if not nuc:
-            self.lbl_e.setText('—')
-            self._e_value = None
-            return
-        df_e = get_nuclide_df(nuc, route)
-        if df_e is None or df_e.empty:
-            self.lbl_e.setText('无数据')
-            self._e_value = None
-            self._update_I()
-            return
-        aero_e = self.cb_aerosol.currentText()
-        ps = self._get_ps()
-        if not aero_e or ps is None:
-            self.lbl_e.setText('—')
-            self._e_value = None
-            self._update_I()
-            return
-        e = interp_dose_coeff(df_e, aero_e, ps)
-        if e is not None:
-            self.lbl_e.setText(f'{e:.4e} Sv/Bq  (插值 @ {ps:.1f}μm)')
-            self._e_value = e
-        else:
-            self.lbl_e.setText('无数据')
-            self._e_value = None
-        self._update_I()
-
-    def _update_I(self):
-        m = self._m_value
-        M = self.spin_M.value()
-        if m and m > 0:
-            I = calc_intake(M, m)
-            self.lbl_I.setText(f'I = {I:.3e} Bq')
-            self._I_value = I
-        else:
-            self.lbl_I.setText('I = —')
-            self._I_value = None
-
-    def _on_calc(self):
-        self._update_I()
-        self._refresh_e()
-        I = self._I_value
-        e = self._e_value
-        m = self._m_value
-        if I is None:
-            QMessageBox.warning(self, '参数不完整',
-                                'm 值未唯一确定，请调整监测参数筛选条件（当前仍匹配多行）')
-            return
-        if e is None:
-            QMessageBox.warning(self, '参数不完整', '无法获取剂量系数 e，请检查核素数据或粒径/气溶胶类型设置')
-            return
-        E = calc_dose(I, e)
-        self.lbl_dose.setText(f'E = {E:.4e} Sv')
-        self._E_value = E
-        self._calc_result = {
-            'id':               self._next_id,
-            'nuclide':          self.cb_nuclide.currentText(),
-            'intake_route':     self.cb_intake.currentText(),
-            'aerosol_type':     self.cb_aerosol.currentText(),
-            'particle_size':    self._get_ps(),
-            'monitoring_method': self.cb_method.currentText(),
-            'time_days':        self._get_time(),
-            'm_value':          m,
-            'M':                self.spin_M.value(),
-            'I':                I,
-            'e_value':          e,
-            'E':                E,
-            'monitor_type':     self._monitor_type,
-        }
-        self.btn_add.setEnabled(True)
-
-    def _on_add(self):
-        if self._calc_result is None:
-            return
-        self.item_ready.emit(self._calc_result)
-        self._next_id += 1
-        self._calc_result = None
-        self.btn_add.setEnabled(False)
-        self.lbl_dose.setText('E = —')
-
-    # ==================================================================
-    #   工具方法
-    # ==================================================================
-    def _get_ps(self) -> float | None:
-        txt = self.cb_ps_preset.currentText()
-        if txt == '自定义':
-            return float(self.spin_ps_custom.value())
-        try:
-            return float(txt)
-        except Exception:
-            return None
-
-    def _get_time(self):
-        try:
-            return float(self.cb_time.currentText())
-        except Exception:
-            return self.cb_time.currentText()
-
-    @staticmethod
-    def _fill_cb(cb: QComboBox, items: list, block: bool = False):
-        cur = cb.currentText()
-        if block:
-            cb.blockSignals(True)
-        cb.clear()
-        cb.addItems(items)
-        idx = cb.findText(cur)
-        cb.setCurrentIndex(idx if idx >= 0 else 0)
-        if block:
-            cb.blockSignals(False)
-
-    def _clear_filters(self):
-        for cb in [self.cb_intake, self.cb_aerosol, self.cb_method,
-                   self.cb_time, self.cb_fA]:
-            cb.blockSignals(True)
-            cb.clear()
-            cb.blockSignals(False)
-        self.lbl_m.setText('—')
-        self.lbl_e.setText('—')
-
-# =====================================================================
-#   SummaryPanel —— 右侧表格 + 汇总
+#   SummaryPanel —— 汇总 + 导出
 # =====================================================================
 class SummaryPanel(QWidget):
-    def __init__(self, parent=None):
+    export_requested = pyqtSignal()
+
+    def __init__(self, table: ResultTable, parent=None):
         super().__init__(parent)
-        root = QVBoxLayout(self)
-        root.setSpacing(6)
+        self._table = table
+        self._setup_ui()
 
-        self.table = ResultTable()
-        self.table.row_deleted.connect(self._on_row_deleted)
-        root.addWidget(self.table)
+    def _setup_ui(self):
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 6, 0, 0)
 
-        sum_frame = QFrame()
-        sum_frame.setFrameStyle(QFrame.StyledPanel)
-        sum_frame.setStyleSheet('background:#d5f5e3; border-radius:6px;')
-        sum_hl = QHBoxLayout(sum_frame)
-        self.lbl_total = QLabel('总有效剂量：— Sv')
-        self.lbl_total.setStyleSheet('font-size:15px; font-weight:bold; color:#148f77;')
-        self.lbl_count = QLabel('共 0 项')
-        sum_hl.addWidget(self.lbl_total)
-        sum_hl.addStretch()
-        sum_hl.addWidget(self.lbl_count)
-        root.addWidget(sum_frame)
+        self.lbl_total = QLabel('总有效剂量: — Sv')
+        self.lbl_total.setStyleSheet('font-size:14px; font-weight:bold; color:#2c3e50;')
+        layout.addWidget(self.lbl_total)
 
-        btn_row = QHBoxLayout()
-        self.btn_clear  = QPushButton('🗑 清空全部')
-        self.btn_export = QPushButton('📥 导出 CSV')
-        self.btn_clear.setStyleSheet('color:#c0392b; font-weight:bold;')
-        self.btn_export.setStyleSheet(
-            'background:#2980b9; color:white; padding:5px 14px; border-radius:4px;')
-        btn_row.addWidget(self.btn_clear)
-        btn_row.addStretch()
-        btn_row.addWidget(self.btn_export)
-        root.addLayout(btn_row)
+        layout.addStretch()
 
-        self.btn_clear.clicked.connect(self._on_clear)
-        self.btn_export.clicked.connect(self._on_export)
+        btn_export = QPushButton('导出报告 (CSV)')
+        btn_export.setStyleSheet(
+            'QPushButton{padding:6px 18px; font-size:12px; '
+            'background:#27ae60; color:white; border:none; border-radius:4px;} '
+            'QPushButton:hover{background:#2ecc71;}')
+        btn_export.clicked.connect(self.export_requested.emit)
+        layout.addWidget(btn_export)
 
-    def add_item(self, item: dict):
-        self.table.add_item(item)
-        self._refresh_total()
+        btn_export_xlsx = QPushButton('导出 Excel')
+        btn_export_xlsx.setStyleSheet(
+            'QPushButton{padding:6px 18px; font-size:12px; '
+            'background:#2980b9; color:white; border:none; border-radius:4px;} '
+            'QPushButton:hover{background:#3498db;}')
+        btn_export_xlsx.clicked.connect(lambda: self.export_requested.emit())
+        layout.addWidget(btn_export_xlsx)
 
-    def _on_row_deleted(self, _):
-        self._refresh_total()
+        btn_clear = QPushButton('清空表格')
+        btn_clear.setStyleSheet(
+            'QPushButton{padding:6px 12px; font-size:12px; '
+            'background:#e74c3c; color:white; border:none; border-radius:4px;} '
+            'QPushButton:hover{background:#c0392b;}')
+        btn_clear.clicked.connect(self._table.clear_all)
+        btn_clear.clicked.connect(lambda: self.lbl_total.setText('总有效剂量: — Sv'))
+        layout.addWidget(btn_clear)
 
-    def _on_clear(self):
-        reply = QMessageBox.question(self, '确认清空', '确定清空所有监测项？',
-                                     QMessageBox.Yes | QMessageBox.No)
-        if reply == QMessageBox.Yes:
-            self.table.clear_all()
-            self._refresh_total()
-
-    def _on_export(self):
-        df = self.table.export_df()
-        if df.empty:
-            QMessageBox.information(self, '提示', '列表为空，无可导出数据')
-            return
-        path, _ = QFileDialog.getSaveFileName(self, '保存 CSV',
-                                              'monitoring_dose_result.csv',
-                                              'CSV Files (*.csv)')
-        if path:
-            df.to_csv(path, index=False, encoding='utf-8-sig')
-            QMessageBox.information(self, '导出成功', f'已保存至:\n{path}')
+        self._table.row_deleted.connect(self._refresh_total)
+        self._table.model().rowsInserted.connect(self._refresh_total)
 
     def _refresh_total(self):
-        total = self.table.total_dose()
-        n     = len(self.table._items)
-        self.lbl_total.setText(f'总有效剂量：{total:.4e} Sv')
-        self.lbl_count.setText(f'共 {n} 项')
+        total = self._table.total_dose()
+        self.lbl_total.setText(f'总有效剂量: {total:.3e} Sv')
+
 
 # =====================================================================
-#   主窗口
+#   ParamPanel —— 左侧参数面板
 # =====================================================================
-class MonitoringDoseApp(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle('监测法内照射剂量计算系统 v1.1  |  GB/T 16148')
-        # 默认尺寸比 v1.0 增大 30px（1280→1310，760→790）
-        self.resize(1310, 790)
-        self.setMinimumSize(900, 600)
-        self._build_ui()
-        self._init_data()
+class ParamPanel(QWidget):
+    item_added = pyqtSignal(dict)
 
-    # ------------------------------------------------------------------
-    def _build_ui(self):
-        central = QWidget()
-        self.setCentralWidget(central)
-        v_main = QVBoxLayout(central)
-        v_main.setSpacing(0)
-        v_main.setContentsMargins(8, 8, 8, 6)
+    PS_PRESETS = ['0.001', '0.003', '0.01', '0.03', '0.1', '0.3',
+                  '1.0', '3.0', '5.0', '10.0', '20.0', '自定义']
 
-        # ── 标题 ──
-        title = QLabel(
-            '📋 监测法内照射有效剂量计算系统  |  依据 GB/T 16148 / ICRP Pub.54/78/130')
-        title.setStyleSheet('font-size:16px; font-weight:bold; color:#1a5276; padding:4px 0;')
-        v_main.addWidget(title)
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._id_counter = 0
+        self._items: list = []
+        self._setup_ui()
+        self._connect_signals()
 
-        # ── 监测类型切换 ──
-        type_row = QHBoxLayout()
-        type_row.addWidget(QLabel('监测类型：'))
+    # -----------------------------------------------------------------
+    #   UI
+    # -----------------------------------------------------------------
+    def _setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(8)
+
+        # ═══ ① 监测类型 ═══
+        g_type = QGroupBox('① 监测类型')
+        fl0 = QFormLayout(g_type)
         self.rb_routine = QRadioButton('常规监测')
         self.rb_special = QRadioButton('应急监测')
         self.rb_routine.setChecked(True)
         bg = QButtonGroup(self)
-        bg.addButton(self.rb_routine)
-        bg.addButton(self.rb_special)
-        type_row.addWidget(self.rb_routine)
-        type_row.addWidget(self.rb_special)
-        type_row.addSpacing(20)
-        # 提示标签
-        self.lbl_route_hint = QLabel('（常规：仅吸入）')
-        self.lbl_route_hint.setStyleSheet('color:#888; font-size:11px;')
-        type_row.addWidget(self.lbl_route_hint)
-        type_row.addStretch()
-        self.lbl_data_status = QLabel('数据加载中…')
-        self.lbl_data_status.setStyleSheet('color:#888;')
-        type_row.addWidget(self.lbl_data_status)
-        v_main.addLayout(type_row)
+        bg.addButton(self.rb_routine, 0); bg.addButton(self.rb_special, 1)
+        bg.buttonClicked.connect(lambda btn: self._on_type_changed())
+        fl0.addRow(self.rb_routine)
+        fl0.addRow(self.rb_special)
+        main_layout.addWidget(g_type)
 
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setFrameShadow(QFrame.Sunken)
-        v_main.addWidget(line)
+        # ═══ ② 核素 + 摄入途径 ═══
+        g_nuc = QGroupBox('② 核素 & 摄入途径')
+        fl1 = QFormLayout(g_nuc)
+        self.cb_nuclide = QComboBox()
+        self.cb_nuclide.setMinimumWidth(180)
+        fl1.addRow('核素:', self.cb_nuclide)
+        self.cb_route = QComboBox()
+        self.cb_route.setMinimumWidth(180)
+        fl1.addRow('摄入途径:', self.cb_route)
+        main_layout.addWidget(g_nuc)
 
-        # ── 主体分割 ──
+        # ═══ ③ 物质 / fA ═══
+        g_mat = QGroupBox('③ 物质类型 (fA)')
+        fl2 = QFormLayout(g_mat)
+        self.cb_material = QComboBox()
+        self.cb_material.setMinimumWidth(180)
+        fl2.addRow('物质:', self.cb_material)
+        main_layout.addWidget(g_mat)
+
+        # ═══ ④ 样本类型 ═══
+        g_sample = QGroupBox('④ 样本类型')
+        fl3 = QFormLayout(g_sample)
+        self.cb_sample = QComboBox()
+        self.cb_sample.setMinimumWidth(180)
+        fl3.addRow('样本:', self.cb_sample)
+        main_layout.addWidget(g_sample)
+
+        # ═══ ⑤ AMAD 粒径 (仅 Inhalation) ═══
+        self.g_ps = QGroupBox('⑤ 粒径 AMAD (μm) — 仅吸入途径')
+        fl4 = QFormLayout(self.g_ps)
+        self.cb_ps_preset = QComboBox()
+        self.cb_ps_preset.addItems(self.PS_PRESETS)
+        fl4.addRow('预设:', self.cb_ps_preset)
+        self.spin_ps_custom = QDoubleSpinBox()
+        self.spin_ps_custom.setRange(0.001, 100.0)
+        self.spin_ps_custom.setDecimals(3)
+        self.spin_ps_custom.setValue(5.0)
+        self.spin_ps_custom.setSingleStep(0.1)
+        self.spin_ps_custom.setVisible(False)
+        fl4.addRow('自定义(μm):', self.spin_ps_custom)
+        main_layout.addWidget(self.g_ps)
+
+        # ═══ ⑥ 时间 ═══
+        g_time = QGroupBox('⑥ 时间参数')
+        fl5 = QFormLayout(g_time)
+        self.lbl_time = QLabel('监测周期 T (天):')
+        self.spin_T = QDoubleSpinBox()
+        self.spin_T.setRange(1, 36500)
+        self.spin_T.setDecimals(1)
+        self.spin_T.setValue(180.0)
+        self.spin_T.setSingleStep(30)
+        fl5.addRow(self.lbl_time, self.spin_T)
+        self.lbl_t_info = QLabel('计算用 t = T/2 = 90.0 天')
+        self.lbl_t_info.setStyleSheet('color:#7f8c8d; font-size:11px;')
+        fl5.addRow(self.lbl_t_info)
+        main_layout.addWidget(g_time)
+
+        # ═══ ⑦ 测量值 M ═══
+        g_M = QGroupBox('⑦ 测量值 M')
+        fl6 = QFormLayout(g_M)
+        self.spin_M = QDoubleSpinBox()
+        self.spin_M.setRange(1e-20, 1e20)
+        self.spin_M.setDecimals(6)
+        self.spin_M.setValue(1.0)
+        self.spin_M.setSingleStep(0.1)
+        self.spin_M.setPrefix('M = ')
+        self.spin_M.setSuffix(' Bq')
+        fl6.addRow(self.spin_M)
+        main_layout.addWidget(g_M)
+
+        # ═══ ⑧ 当前 z(t) 显示 ═══
+        g_z = QGroupBox('⑧ 剂量转换系数 z(t)')
+        fl7 = QFormLayout(g_z)
+        self.lbl_z = QLabel('—')
+        self.lbl_z.setStyleSheet('font-size:14px; font-weight:bold; color:#2980b9;')
+        fl7.addRow('z(t):', self.lbl_z)
+        main_layout.addWidget(g_z)
+
+        # ═══ ⑨ 计算 & 添加 ═══
+        g_calc = QGroupBox('⑨ 操作')
+        fl8 = QFormLayout(g_calc)
+        btn_calc = QPushButton('▶  计算并添加到结果表')
+        btn_calc.setStyleSheet(
+            'QPushButton{padding:8px 20px; font-size:13px; font-weight:bold; '
+            'background:#2980b9; color:white; border:none; border-radius:4px;} '
+            'QPushButton:hover{background:#3498db;}')
+        btn_calc.clicked.connect(self._on_calc)
+        fl8.addRow(btn_calc)
+        main_layout.addWidget(g_calc)
+
+        main_layout.addStretch()
+
+    # -----------------------------------------------------------------
+    #   信号连接
+    # -----------------------------------------------------------------
+    def _connect_signals(self):
+        self.cb_nuclide.currentTextChanged.connect(self._on_nuclide_changed)
+        self.cb_route.currentTextChanged.connect(self._on_route_changed)
+        self.cb_material.currentTextChanged.connect(self._on_material_changed)
+        self.cb_ps_preset.currentTextChanged.connect(self._on_ps_preset_changed)
+        self.spin_T.valueChanged.connect(self._on_T_changed)
+        self.spin_ps_custom.valueChanged.connect(lambda: self._refresh_z())
+
+    # -----------------------------------------------------------------
+    #   数据填充
+    # -----------------------------------------------------------------
+    @staticmethod
+    def _fill_cb(cb: QComboBox, items: list, block=False):
+        cb.blockSignals(block)
+        cb.clear()
+        cb.addItems([str(v) for v in items])
+        if items and not block:
+            cb.setCurrentIndex(0)
+
+    def init_data(self):
+        """初始化核素列表"""
+        nucs = sorted(_zdata['radionuclide'].unique())
+        self._fill_cb(self.cb_nuclide, nucs, block=True)
+        self.cb_nuclide.setCurrentIndex(0)
+        self._on_nuclide_changed()
+
+    # -----------------------------------------------------------------
+    #   槽函数
+    # -----------------------------------------------------------------
+    def _on_type_changed(self):
+        """监测类型切换"""
+        nuc = self.cb_nuclide.currentText()
+        if not nuc:
+            return
+        self._on_nuclide_changed()
+
+    def _on_nuclide_changed(self):
+        """核素变化 → 刷新途径、时间标签"""
+        nuc = self.cb_nuclide.currentText()
+        if not nuc:
+            return
+
+        is_routine = self.rb_routine.isChecked()
+        sub = _zdata[_zdata['radionuclide'] == nuc]
+        if sub.empty:
+            self._fill_cb(self.cb_route, ['无数据'], block=True)
+            return
+
+        all_routes = sorted(sub['route_of_intake'].unique())
+
+        if is_routine:
+            # 常规监测仅 Inhalation
+            if 'Inhalation' in all_routes:
+                routes = ['Inhalation']
+            else:
+                routes = all_routes  # 退化
+            # 时间: 周期 T
+            self.lbl_time.setText('监测周期 T (天):')
+            self.spin_T.setVisible(True)
+            self.lbl_t_info.setVisible(True)
+            self._on_T_changed()
+        else:
+            # 应急监测: 三种途径都可选
+            routes = all_routes
+            # 时间: 直接输入 t
+            self.lbl_time.setText('摄入后时间 t (天):')
+            self.spin_T.setVisible(True)
+            self.lbl_t_info.setText('直接使用输入时间 t')
+            self._on_T_changed()
+
+        self._fill_cb(self.cb_route, routes, block=True)
+        if 'Inhalation' in routes:
+            self.cb_route.setCurrentText('Inhalation')
+        else:
+            self.cb_route.setCurrentIndex(0)
+        self._on_route_changed()
+
+    def _on_route_changed(self):
+        """途径变化 → 刷新物质列表"""
+        nuc = self.cb_nuclide.currentText()
+        route = self.cb_route.currentText()
+        if not nuc or not route:
+            return
+
+        sub = _zdata[(_zdata['radionuclide'] == nuc) &
+                     (_zdata['route_of_intake'] == route)]
+        if sub.empty:
+            self._fill_cb(self.cb_material, ['无数据'], block=True)
+            return
+
+        materials = sub[['material', 'fA']].drop_duplicates().values.tolist()
+        mat_labels = [f"{m[0]} (fA={m[1]})" if pd.notna(m[1]) else m[0] for m in materials]
+
+        self._fill_cb(self.cb_material, mat_labels, block=True)
+        self.cb_material.setCurrentIndex(0)
+
+        # AMAD: 仅 Inhalation 显示
+        if route == 'Inhalation':
+            self.g_ps.setVisible(True)
+            amads = sorted(sub['amad_um'].dropna().unique())
+            self.cb_ps_preset.blockSignals(True)
+            self.cb_ps_preset.clear()
+            preset_items = [str(a) for a in amads] + ['自定义']
+            self.cb_ps_preset.addItems(preset_items)
+            if len(amads) > 0:
+                self.cb_ps_preset.setCurrentIndex(0)
+                self._on_ps_preset_changed()
+            self.cb_ps_preset.blockSignals(False)
+        else:
+            self.g_ps.setVisible(False)
+
+        # 样本类型
+        meta_cols = {'radionuclide', 'route_of_intake', 'material', 'fA', 'amad_um', 'time_days'}
+        sample_cols = [c for c in _zdata.columns if c not in meta_cols]
+        self._fill_cb(self.cb_sample, sample_cols, block=True)
+
+        self._on_material_changed()
+
+    def _on_material_changed(self):
+        self._refresh_z()
+
+    def _on_ps_preset_changed(self):
+        """粒径预设变化"""
+        if self.cb_ps_preset.currentText() == '自定义':
+            self.spin_ps_custom.setVisible(True)
+        else:
+            self.spin_ps_custom.setVisible(False)
+        self._refresh_z()
+
+    def _on_T_changed(self):
+        is_routine = self.rb_routine.isChecked()
+        val = self.spin_T.value()
+        if is_routine:
+            t = val / 2.0
+            self.lbl_t_info.setText(f'计算用 t = T/2 = {t:.4f} 天')
+        else:
+            t = val
+            self.lbl_t_info.setText(f'直接使用 t = {t:.4f} 天')
+        self._refresh_z()
+
+    # -----------------------------------------------------------------
+    #   z(t) 刷新
+    # -----------------------------------------------------------------
+    def _refresh_z(self):
+        """刷新 z(t) 显示"""
+        z = self._compute_z()
+        if z is not None:
+            self.lbl_z.setText(f'{z:.3e} Sv/Bq')
+        else:
+            self.lbl_z.setText('— (无数据)')
+
+    def _compute_z(self) -> float | None:
+        nuc = self.cb_nuclide.currentText()
+        route = self.cb_route.currentText()
+        mat_text = self.cb_material.currentText()
+        sample = self.cb_sample.currentText()
+
+        if not all([nuc, route, mat_text, sample]):
+            return None
+
+        # 还原 material 名称 (去掉 " (fA=...)" 后缀)
+        mat_name = mat_text.split(' (fA=')[0] if ' (fA=' in mat_text else mat_text
+
+        # 时间 t
+        is_routine = self.rb_routine.isChecked()
+        if is_routine:
+            t = self.spin_T.value() / 2.0
+        else:
+            t = self.spin_T.value()
+
+        # 粒径
+        ps_um = None
+        if route == 'Inhalation':
+            ps_text = self.cb_ps_preset.currentText()
+            if ps_text == '自定义':
+                ps_um = self.spin_ps_custom.value()
+            else:
+                try:
+                    ps_um = float(ps_text)
+                except ValueError:
+                    ps_um = 5.0
+
+        return lookup_z(nuc, route, mat_name, sample, t, ps_um)
+
+    def _get_time(self) -> float:
+        is_routine = self.rb_routine.isChecked()
+        if is_routine:
+            return self.spin_T.value() / 2.0
+        else:
+            return self.spin_T.value()
+
+    def _get_ps_um(self) -> float | None:
+        route = self.cb_route.currentText()
+        if route != 'Inhalation':
+            return None
+        ps_text = self.cb_ps_preset.currentText()
+        if ps_text == '自定义':
+            return self.spin_ps_custom.value()
+        try:
+            return float(ps_text)
+        except ValueError:
+            return 5.0
+
+    # -----------------------------------------------------------------
+    #   计算 & 发射信号
+    # -----------------------------------------------------------------
+    def _on_calc(self):
+        nuc = self.cb_nuclide.currentText()
+        route = self.cb_route.currentText()
+        mat_text = self.cb_material.currentText()
+        sample = self.cb_sample.currentText()
+        M = self.spin_M.value()
+
+        if not all([nuc, route, mat_text, sample]):
+            QMessageBox.warning(self, '参数不全', '请完成核素/途径/物质/样本类型选择')
+            return
+
+        mat_name = mat_text.split(' (fA=')[0] if ' (fA=' in mat_text else mat_text
+        t = self._get_time()
+        ps_um = self._get_ps_um()
+
+        z = lookup_z(nuc, route, mat_name, sample, t, ps_um)
+        if z is None or z == 0:
+            QMessageBox.warning(self, '数据缺失',
+                f'无法计算 z(t):\n核素={nuc} 途径={route} 物质={mat_name}\n'
+                f'样本={sample} t={t:.4f}d')
+            return
+
+        E = calc_effective_dose(M, z)
+        self._id_counter += 1
+
+        item = {
+            'id': self._id_counter,
+            'nuclide': nuc,
+            'route': route,
+            'material': mat_text,
+            'fA': mat_text.split('(fA=')[-1].rstrip(')') if '(fA=' in mat_text else '—',
+            'ps_um': ps_um,
+            'sample_type': sample,
+            't': t,
+            'z': z,
+            'M': M,
+            'E': E,
+        }
+        self._items.append(item)
+        self.item_added.emit(item)
+
+
+# =====================================================================
+#   MainWindow
+# =====================================================================
+class MonitoringDoseApp(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle('监测法内照射剂量计算系统 v2.0 — GB/T 16148-2009 z(t) 函数法')
+        self.resize(1310, 790)
+        self.setMinimumSize(900, 600)
+        self._setup_ui()
+        self._connect_signals()
+        self._init()
+
+    def _setup_ui(self):
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+
         splitter = QSplitter(Qt.Horizontal)
-        splitter.setHandleWidth(5)
 
-        # 左：参数面板（可滚动，无最大宽度限制，完全可拖拽）
-        self.param_panel = ParamPanel(monitor_type='常规监测')
-        self.param_panel.setMinimumWidth(360)
+        # ── 左侧: 参数面板 ──
         scroll = QScrollArea()
-        scroll.setWidget(self.param_panel)
         scroll.setWidgetResizable(True)
         scroll.setMinimumWidth(360)
+        scroll.setFrameShape(QFrame.NoFrame)
+
+        self.param_panel = ParamPanel()
+        scroll.setWidget(self.param_panel)
         splitter.addWidget(scroll)
 
-        # 右：汇总面板
-        self.summary_panel = SummaryPanel()
-        self.summary_panel.setMinimumWidth(400)
-        splitter.addWidget(self.summary_panel)
+        # ── 右侧: 表格 + 汇总 ──
+        right = QWidget()
+        rl = QVBoxLayout(right)
+        rl.setContentsMargins(6, 0, 0, 0)
 
-        # 初始左右比例 ~38:62（可拖动调整）
-        splitter.setSizes([460, 850])
-        v_main.addWidget(splitter, 1)
+        self.result_table = ResultTable()
+        rl.addWidget(self.result_table, 1)
 
-        # ── 状态栏 ──
-        sb = QStatusBar()
-        self.setStatusBar(sb)
-        self.status_lbl = QLabel('就绪')
-        sb.addWidget(self.status_lbl)
+        self.summary_panel = SummaryPanel(self.result_table)
+        rl.addWidget(self.summary_panel)
 
-        # ── 信号 ──
-        bg.buttonClicked.connect(lambda btn: self._on_type_changed(btn.isChecked()))
-        self.param_panel.item_ready.connect(self._on_item_ready)
+        splitter.addWidget(right)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 2)
+        splitter.setSizes([450, 800])
 
-    # ------------------------------------------------------------------
-    def _init_data(self):
-        self.status_lbl.setText('正在扫描数据…')
-        QApplication.processEvents()
-        scan_monitoring()
-        scan_nuclides()
+        main_layout.addWidget(splitter)
 
-        msgs = []
-        if not _ROUTINE_DATA.empty:
-            msgs.append(f'常规监测 {len(_ROUTINE_DATA)} 条')
-        if not _SPECIAL_DATA.empty:
-            msgs.append(f'应急监测 {len(_SPECIAL_DATA)} 条')
-        if _element_map:
-            msgs.append(f'核素剂量系数 {sum(len(v) for v in _element_map.values())} 个')
-        self.lbl_data_status.setText('  |  '.join(msgs) if msgs else '⚠️ 未找到数据')
+        # 状态栏
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
+        self.status_bar.showMessage('就绪 | 数据: z_data/U_235_zdata.csv (GB/T 16148-2009)')
 
-        self.param_panel.populate()
-        self.status_lbl.setText('就绪')
+    def _connect_signals(self):
+        self.param_panel.item_added.connect(self._on_item_added)
+        self.summary_panel.export_requested.connect(self._export)
 
-    # ------------------------------------------------------------------
-    def _on_type_changed(self, checked):
-        if checked:
-            mtype = '常规监测' if self.rb_routine.isChecked() else '应急监测'
-            self.param_panel.set_monitor_type(mtype)
-            if mtype == '常规监测':
-                self.lbl_route_hint.setText('（常规：仅吸入）')
+    def _init(self):
+        scan_z_data()
+        self.param_panel.init_data()
+
+    def _on_item_added(self, item: dict):
+        self.result_table.add_item(item)
+        self.summary_panel._refresh_total()
+        self.status_bar.showMessage(
+            f'已添加: {item["nuclide"]} | z({item["t"]:.1f}d)={item["z"]:.3e} Sv/Bq | '
+            f'E={item["E"]:.3e} Sv')
+
+    def _export(self):
+        items = self.result_table.get_items()
+        if not items:
+            QMessageBox.information(self, '提示', '结果表中无数据')
+            return
+        ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, '导出报告', f'dose_report_{ts}.csv',
+            'CSV (*.csv);;Excel (*.xlsx)')
+        if not save_path:
+            return
+        try:
+            df = pd.DataFrame(items)
+            cols_order = ['id', 'nuclide', 'route', 'material', 'fA',
+                          'ps_um', 'sample_type', 't', 'z', 'M', 'E']
+            df = df[[c for c in cols_order if c in df.columns]]
+            if save_path.endswith('.xlsx'):
+                df.to_excel(save_path, index=False)
             else:
-                self.lbl_route_hint.setText('（应急：Inhalation / Injection / Ingestion）')
-
-    def _on_item_ready(self, item: dict):
-        self.summary_panel.add_item(item)
-        self.status_lbl.setText(
-            f"已添加: {item['nuclide']} [{item['intake_route']}]"
-            f" | E = {item['E']:.3e} Sv  （{datetime.datetime.now().strftime('%H:%M:%S')}）")
+                df.to_csv(save_path, index=False, encoding='utf-8-sig')
+            self.status_bar.showMessage(f'报告已导出: {save_path}')
+        except Exception as e:
+            QMessageBox.warning(self, '导出失败', str(e))
 
 
 # =====================================================================
@@ -933,11 +807,7 @@ class MonitoringDoseApp(QMainWindow):
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
-    font = QFont('Microsoft YaHei', 10)
-    app.setFont(font)
-    pal = app.palette()
-    pal.setColor(pal.Window, QColor('#f4f6f7'))
-    app.setPalette(pal)
+    app.setFont(QFont('Microsoft YaHei', 9))
     win = MonitoringDoseApp()
     win.show()
     sys.exit(app.exec_())
