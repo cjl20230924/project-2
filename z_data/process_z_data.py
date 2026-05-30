@@ -1,138 +1,280 @@
+"""
+process_z_data.py
+=================
+解析 z_data 目录下所有 *.txt 文件（ICRP z(t) 数据），
+生成对应的 *_zdata.csv（单文件）+ all_zdata.csv（合并全量）。
+
+列名规范化策略
+--------------
+原始列名可能含括号后缀、星号，例如：
+  "Whole Body (Th-234)"  →  whole_body
+  "Alimentary Tract* (Th-234)"  →  alimentary_tract
+  "Lungs*"  →  lungs
+规则：先去掉 (xxx) 括号内容，再去掉星号，再 strip，最后按固定映射表匹配。
+未命中映射表的列按 snake_case 转换保留。
+
+运行方式
+--------
+cd z_data
+python process_z_data.py
+
+输出
+----
+  U_235_zdata.csv  U_238_zdata.csv  Pu_239_zdata.csv  Pu_240_zdata.csv
+  all_zdata.csv    (所有文件合并)
+"""
+
 import re
+import sys
+from pathlib import Path
+
 import pandas as pd
 
+# =====================================================================
+#   列名映射（清理后的原始名 → 标准列名）
+# =====================================================================
+_COL_MAP = {
+    'Time, days':                         'time_days',
+    'Whole Body':                         'whole_body',
+    'Urine (24-hour sample)':             'urine_24h',
+    'Faeces (24-hour sample)':            'faeces_24h',
+    'Alimentary Tract':                   'alimentary_tract',
+    'Lungs':                              'lungs',
+    'Skeleton':                           'skeleton',
+    'Liver':                              'liver',
+}
 
-def parse_z_t_file(filepath, output_csv):
+# 元数据键名映射（txt 文件中的 key → DataFrame 列名）
+_META_KEYS = {
+    'Radionuclide':   'radionuclide',
+    'Route of Intake': 'route_of_intake',
+    'Material':        'material',
+    'AMTD/AMAD, µm':   'amad_um',
+}
+
+
+def _normalize_col(raw: str) -> str:
     """
-    解析包含多个数据块的剂量-含量转换函数文件，输出统一CSV。
+    清理原始列名：
+      1. 去掉括号及括号内内容，如 "(Th-234)" → ""
+         注意保留"Urine (24-hour sample)"这类小括号 → 只去掉末尾的 (元素符号) 类型括号
+         策略：去掉 "(<大写字母开头的内容>)" 模式
+      2. 去掉星号
+      3. strip
+      4. 查映射表；未命中则 snake_case 转换
+    """
+    # 去掉末尾的 (元素-数字) 类型括号，如 "(Th-234)", "(Ra-226)"
+    cleaned = re.sub(r'\s*\([A-Z][a-z]?-\d+\)\s*$', '', raw)
+    # 去掉星号
+    cleaned = cleaned.replace('*', '').strip()
+
+    # 查映射表
+    if cleaned in _COL_MAP:
+        return _COL_MAP[cleaned]
+
+    # 未命中：snake_case 转换（保底）
+    return re.sub(r'[^a-zA-Z0-9]+', '_', cleaned).lower().strip('_')
+
+
+def parse_z_t_file(filepath: str | Path, output_csv: str | Path = None) -> pd.DataFrame:
+    """
+    解析单个 z(t) txt 文件，返回 DataFrame；若指定 output_csv 则同时保存。
 
     参数:
-        filepath: 原始文本文件路径 (如 'U_235.txt')
-        output_csv: 输出的CSV文件路径 (如 'U_235_dose_per_content.csv')
+        filepath    : 原始 txt 文件路径
+        output_csv  : 输出 CSV 路径（可选）
+
+    返回:
+        DataFrame，列包括：
+          radionuclide, route_of_intake, material, fA, amad_um,
+          time_days, whole_body, urine_24h, faeces_24h,
+          alimentary_tract, lungs, skeleton, liver
     """
+    filepath = Path(filepath)
     with open(filepath, 'r', encoding='utf-8') as f:
         lines = f.readlines()
 
-    records = []  # 存储每条记录（每个时间点的数据+元数据）
-
-    i = 0
-    n = len(lines)
-
-    # 定义需要提取的元数据键名（与文件中的键名一致）
-    meta_keys = {
-        'Radionuclide': 'radionuclide',
-        'Route of Intake': 'route_of_intake',
-        'Material': 'material',
-        'AMTD/AMAD, µm': 'amad_um'
-    }
+    records = []
+    i, n = 0, len(lines)
 
     while i < n:
         line = lines[i].strip()
-        # 查找数据块起始行
-        if line.startswith('Radionuclide'):
-            metadata = {}
-            # 读取元数据：从当前行开始，直到遇到空行
-            while i < n and lines[i].strip() != '':
-                kv_line = lines[i].strip()
-                if '\t' in kv_line:
-                    key, val = kv_line.split('\t', 1)
-                    key = key.strip()
-                    val = val.strip()
-                    if key in meta_keys:
-                        metadata[meta_keys[key]] = val
-                i += 1
-            # 跳过可能的空行
-            while i < n and lines[i].strip() == '':
-                i += 1
 
-            # 寻找表格头部（以 "Committed Effective Dose" 开头的描述行，可跳过）
-            if i < n and 'Committed Effective Dose' in lines[i]:
-                i += 1
-            # 表格列名行（应包含 "Time, days"）
-            if i >= n or 'Time, days' not in lines[i]:
-                continue  # 格式错误，跳过此块
-            header_line = lines[i].strip()
-            # 解析列名，清理特殊字符和单位，统一为英文列名
-            raw_cols = [c.strip() for c in header_line.split('\t')]
-            # 映射关系（标准化）
-            col_map = {
-                'Time, days': 'time_days',
-                'Whole Body': 'whole_body',
-                'Urine (24-hour sample)': 'urine_24h',
-                'Faeces (24-hour sample)': 'faeces_24h',
-                'Alimentary Tract*': 'alimentary_tract',
-                'Lungs*': 'lungs',
-                'Skeleton*': 'skeleton',
-                'Liver*': 'liver'
-            }
-            std_cols = []
-            for c in raw_cols:
-                # 去除星号和末尾空格
-                c_clean = c.replace('*', '').strip()
-                std_cols.append(col_map.get(
-                    c_clean, c_clean.replace(' ', '_').lower()))
+        # ── 数据块起始：以 "Radionuclide" 开头的行 ──
+        if not line.startswith('Radionuclide'):
+            i += 1
+            continue
+
+        # ── 读取元数据 ──
+        metadata = {}
+        while i < n and lines[i].strip():
+            kv = lines[i].strip()
+            if '\t' in kv:
+                key, val = kv.split('\t', 1)
+                key, val = key.strip(), val.strip()
+                if key in _META_KEYS:
+                    metadata[_META_KEYS[key]] = val
             i += 1
 
-            # 读取数据行，直到遇到空行或下一个数据块开始
-            while i < n:
-                data_line = lines[i].strip()
-                if not data_line:
-                    i += 1
-                    continue
-                # 如果遇到下一个数据块的开始，停止读取
-                if data_line.startswith('Radionuclide'):
-                    break
-                parts = data_line.split('\t')
-                if len(parts) < len(std_cols):
-                    i += 1
-                    continue
-                # 构建当前时间点的记录
-                record = metadata.copy()  # 包含 radionuclide, route_of_intake, material, amad_um
-                # 从 material 中提取 fA 值
-                fA_match = re.search(
-                    r'fA=([\dEe\+\-\.]+)', record.get('material', ''))
-                record['fA'] = fA_match.group(1) if fA_match else ''
-                # 处理 AMAD：如果是 "-" 则设为空
-                if record.get('amad_um') == '-':
-                    record['amad_um'] = None
-                # 解析数值列
-                for idx, col in enumerate(std_cols):
-                    val = parts[idx].strip()
-                    if val == '-':
-                        record[col] = None
-                    else:
-                        try:
-                            record[col] = float(val)
-                        except ValueError:
-                            record[col] = val
-                records.append(record)
+        # 跳过空行
+        while i < n and not lines[i].strip():
+            i += 1
+
+        # ── 可选描述行（Committed Effective Dose per ...）──
+        if i < n and 'Committed Effective Dose' in lines[i]:
+            i += 1
+
+        # ── 必须找到表头（含 "Time, days"）──
+        if i >= n or 'Time, days' not in lines[i]:
+            continue
+
+        raw_header = lines[i].strip()
+        i += 1
+
+        # 解析列名
+        raw_cols = [c.strip() for c in raw_header.split('\t')]
+        std_cols = [_normalize_col(c) for c in raw_cols]
+
+        # 处理 amad_um："-" 表示无粒径
+        amad_raw = metadata.get('amad_um', '')
+        amad_val = None if (amad_raw == '-' or amad_raw == '') else amad_raw
+
+        # 从 material 提取 fA
+        mat = metadata.get('material', '')
+        fa_match = re.search(r'fA=([\dEe+\-.]+)', mat, re.IGNORECASE)
+        fa_val = fa_match.group(1) if fa_match else ''
+
+        # ── 读取数据行，直到空行 / 下一数据块 ──
+        while i < n:
+            data_line = lines[i].strip()
+            if not data_line:
                 i += 1
-        else:
+                continue
+            if data_line.startswith('Radionuclide'):
+                break   # 下一块开始，不推进 i（外层循环处理）
+
+            parts = data_line.split('\t')
+            # 列数不匹配时跳过（容错）
+            if len(parts) < len(std_cols):
+                i += 1
+                continue
+
+            record = {
+                'radionuclide': metadata.get('radionuclide', ''),
+                'route_of_intake': metadata.get('route_of_intake', ''),
+                'material': mat,
+                'fA': fa_val,
+                'amad_um': amad_val,
+            }
+            for idx, col in enumerate(std_cols):
+                val = parts[idx].strip()
+                if val == '-':
+                    record[col] = None
+                else:
+                    try:
+                        record[col] = float(val)
+                    except ValueError:
+                        record[col] = val
+
+            records.append(record)
             i += 1
 
     if not records:
-        print("未解析到任何数据，请检查文件格式。")
-        return
+        print(f'  [警告] {filepath.name}: 未解析到任何数据，请检查格式')
+        return pd.DataFrame()
 
-    # 将记录列表转换为DataFrame
     df = pd.DataFrame(records)
 
-    # 调整列顺序：元数据列在前，然后是时间，最后是各器官/排泄物列
-    meta_cols = ['radionuclide', 'route_of_intake',
-                 'material', 'fA', 'amad_um']
-    time_col = 'time_days'
-    data_cols = [c for c in df.columns if c not in meta_cols and c != time_col]
-    ordered_cols = meta_cols + [time_col] + sorted(data_cols)
-    df = df[ordered_cols]
+    # 数值化
+    for c in ['time_days', 'amad_um']:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors='coerce')
 
-    # 保存CSV
-    df.to_csv(output_csv, index=False, encoding='utf-8')
-    print(f"成功解析 {len(records)} 条记录，保存至 {output_csv}")
+    # 列排序：元数据列 → time_days → 样本列（固定顺序）
+    meta_cols = ['radionuclide', 'route_of_intake', 'material', 'fA', 'amad_um', 'time_days']
+    preferred_data_cols = ['whole_body', 'urine_24h', 'faeces_24h',
+                           'alimentary_tract', 'lungs', 'skeleton', 'liver']
+    extra_cols = [c for c in df.columns
+                  if c not in meta_cols and c not in preferred_data_cols]
+    present_data_cols = [c for c in preferred_data_cols if c in df.columns] + extra_cols
+    ordered = [c for c in meta_cols if c in df.columns] + present_data_cols
+    df = df[ordered]
+
+    if output_csv:
+        output_csv = Path(output_csv)
+        df.to_csv(output_csv, index=False, encoding='utf-8')
+        print(f'  {filepath.name} → {output_csv.name}: '
+              f'{len(df)} 行, {len(df.groupby(["route_of_intake","material","amad_um"],dropna=False))} 个数据块')
+
     return df
 
 
-# 使用示例
+def process_all(z_data_dir: str | Path = None, merge_output: str | Path = None) -> pd.DataFrame:
+    """
+    批量处理 z_data 目录下所有 *.txt 文件。
+
+    参数:
+        z_data_dir   : txt 文件所在目录（默认 = 本脚本所在目录）
+        merge_output : 合并 CSV 输出路径（默认 <z_data_dir>/all_zdata.csv）
+
+    返回:
+        合并后的完整 DataFrame
+    """
+    if z_data_dir is None:
+        z_data_dir = Path(__file__).parent
+    z_data_dir = Path(z_data_dir)
+
+    txt_files = sorted(z_data_dir.glob('*.txt'))
+    if not txt_files:
+        print(f'[警告] {z_data_dir} 下未找到任何 *.txt 文件')
+        return pd.DataFrame()
+
+    print(f'发现 {len(txt_files)} 个 txt 文件：{[f.name for f in txt_files]}')
+
+    all_dfs = []
+    for txt_path in txt_files:
+        stem = txt_path.stem                         # 如 "U_235"
+        csv_path = z_data_dir / f'{stem}_zdata.csv'
+        df = parse_z_t_file(txt_path, csv_path)
+        if not df.empty:
+            all_dfs.append(df)
+
+    if not all_dfs:
+        print('[错误] 所有文件均未解析到数据')
+        return pd.DataFrame()
+
+    merged = pd.concat(all_dfs, ignore_index=True)
+
+    if merge_output is None:
+        merge_output = z_data_dir / 'all_zdata.csv'
+    merged.to_csv(merge_output, index=False, encoding='utf-8')
+
+    nucs = sorted(merged['radionuclide'].unique())
+    routes = sorted(merged['route_of_intake'].unique())
+    print(f'\n合并完成 → {Path(merge_output).name}')
+    print(f'  总行数  : {len(merged)}')
+    print(f'  核素    : {nucs}')
+    print(f'  途径    : {routes}')
+    print(f'  样本列  : {[c for c in merged.columns if c not in {"radionuclide","route_of_intake","material","fA","amad_um","time_days"}]}')
+
+    return merged
+
+
+# =====================================================================
+#   入口
+# =====================================================================
 if __name__ == '__main__':
-    df = parse_z_t_file('U_235.txt', 'U_235_zdata.csv')
-    # 可选：打印前几行查看
-    print(df.head())
+    z_dir = Path(__file__).parent
+    merged_df = process_all(z_dir)
+
+    print('\n--- 前 3 行预览 ---')
+    print(merged_df.head(3).to_string())
+
+    print('\n--- 每个核素 × 途径 × 物质 的行数统计 ---')
+    if not merged_df.empty:
+        summary = (merged_df
+                   .groupby(['radionuclide', 'route_of_intake', 'material'],
+                            dropna=False)
+                   .size()
+                   .reset_index(name='rows'))
+        print(summary.to_string(index=False))
