@@ -51,7 +51,14 @@ warnings.filterwarnings('ignore')
 #   路径 & 懒加载数据层
 # =====================================================================
 HERE = Path(os.path.dirname(os.path.abspath(__file__)))
-Z_DATA_DIR = HERE.parent / 'z_data'
+
+def get_z_data_dir():
+    """PyInstaller 兼容：打包 exe 后从 MEIPASS 读，开发模式从上级目录读"""
+    if hasattr(sys, '_MEIPASS'):
+        return Path(sys._MEIPASS) / 'z_data'
+    return HERE.parent / 'z_data'
+
+Z_DATA_DIR = get_z_data_dir()
 
 # 索引：{核素名 -> csv 路径}，启动时扫描建立
 _nuc_index: dict[str, Path] = {}
